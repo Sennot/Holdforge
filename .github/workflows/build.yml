@@ -1,0 +1,36 @@
+name: Build HoldForge
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure parser and planner tests
+        run: cmake -S . -B build-tests -DHOLDFORGE_CORE_ONLY=ON
+      - run: cmake --build build-tests --parallel
+      - run: ctest --test-dir build-tests --output-on-failure
+  windows:
+    needs: core-tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for GD 2.2081
+        id: build
+        uses: geode-sdk/build-geode-mod@e26ece68d56a3cfa0a7f790d8120c965008c3d08
+        with:
+          sdk: "5.10.1"
+          target: Win64
+          bindings-ref: "7f6c2a75742856de88dad354e576dcff8a28e881"
+          build-config: RelWithDebInfo
+          export-pdb: true
+      - name: Upload mod and debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: HoldForge-Win64
+          path: ${{ steps.build.outputs.build-output }}/*
+          if-no-files-found: error

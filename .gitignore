@@ -1,0 +1,5 @@
+/build*/
+*.geode
+*.pdb
+*.dll
+.DS_Store
