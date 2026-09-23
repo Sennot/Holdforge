@@ -8,6 +8,7 @@ class HoldPopup : public geode::Popup {
     LevelEditorLayer* m_editor = nullptr;
     geode::async::TaskHolder<geode::utils::file::PickResult> m_picker;
     std::optional<Replay> m_replay;
+    std::optional<Calibration> m_calibration;
     std::optional<Prepared> m_prepared;
     cocos2d::CCLabelBMFont* m_file = nullptr;
     cocos2d::CCLabelBMFont* m_status = nullptr;

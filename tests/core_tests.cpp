@@ -1,6 +1,8 @@
 #include "core/Slc.hpp"
 #include "core/Plan.hpp"
-#include "core/SharedInputScope.hpp"
+#include "core/HeldInput.hpp"
+#include "core/Calibration.hpp"
+#include <sstream>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -41,29 +43,32 @@ Bytes v2(int metaSize = 64) {
     put(b, (120 << 5) | (7 << 2), 2); real(b, 480);
     put(b, (240 << 5) | 4, 2); text(b, "EOM"); return b;
 }
-int main() {
+int main(int argc, char** argv) {
  try {
-    // A normal-dual keyboard hold has no independent P2 hold. Borrowing it
-    // must not leave P2 pressed, overwrite a touch ID, or leak on unwinding.
-    bool p2Jump = false; int p2Touch = -1;
-    {
-        hf::SharedInputScope keyboard(p2Jump, p2Touch, true, -1);
-        check(p2Jump && p2Touch == -1, "shared keyboard hold visible to P2 handler");
-        {
-            hf::SharedInputScope touch(p2Jump, p2Touch, false, 42);
-            check(!p2Jump && p2Touch == 42, "shared touch hold visible to P2 handler");
-        }
-        check(p2Jump && p2Touch == -1, "nested input scope restores outer hold");
-    }
-    check(!p2Jump && p2Touch == -1, "P2 not left held after shared handler");
-    p2Jump = true; p2Touch = 77;
-    try { hf::SharedInputScope released(p2Jump, p2Touch, false, -1); throw 1; }
-    catch (int) {}
-    check(p2Jump && p2Touch == 77, "original P2 input restored on unwind");
+    hf::HeldInput latch;
+    check(!latch.held(false) && latch.held(true), "UI fallback before captured input");
+    latch.event(true);
+    check(latch.held(false), "queued press survives false UI flag");
+    latch.event(false);
+    check(!latch.held(true), "captured release overrides stale UI flag");
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");
     check(r.actions.size() == 2 && r.actions[0].frame == 240 && r.actions[1].frame == 360, "delta frames");
+    std::ostringstream header;
+    header << "HFTRACE1 " << std::hex << r.fingerprint << " 1234 " << std::dec << "2\n";
+    auto readTrace = [&](std::string const& rows) {
+        std::istringstream stream(header.str() + rows); return hf::readCalibration(stream, r);
+    };
+    auto calibrated = readTrace("240 1 0 100.5\n360 0 0 200.5\n");
+    check(calibrated.position(240) == 100.25 && calibrated.position(360) == 200.25, "recorded crossing phase");
+    check(calibrated.levelHash == 0x1234, "recorded level binding");
+    error([&] { readTrace("240 0 0 100.5\n360 0 0 200.5\n"); }, "TRACE_INPUT");
+    error([&] { readTrace("240 1 0 100.5\n360 0 0 90\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 100.5\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 100.5\n360 0 0 200.5\nextra"); }, "TRACE_TRAILING");
+    error([&] { calibrated.position(100); }, "TRACE_FRAME");
+    error([&] { std::istringstream stream("HFTRACE1 0 1234 2"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
     auto p = hf::plan(r, {});
     check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial control gate");
     check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "shared dual press");
@@ -139,6 +144,20 @@ int main() {
         auto mutant = data; auto index = rng() % mutant.size(); mutant[index] ^= uint8_t(1 + rng() % 255);
         try { auto parsed = hf::parse(mutant); check(parsed.actions.size() <= hf::MaxActions, "bounded mutation output"); }
         catch (hf::Error const&) {}
+    }
+    if (argc == 3) {
+        auto actual = hf::read(argv[1]);
+        auto reference = hf::readCalibration(std::filesystem::path(argv[2]), actual);
+        auto actualPlan = hf::plan(actual, {});
+        check(actual.actions.size() == reference.inputs.size(), "actual macro reference coverage");
+        double previousX = 0;
+        for (auto const& g : actualPlan.gates) {
+            if (!g.frame) continue;
+            auto x = reference.position(g.frame);
+            check(std::isfinite(x) && x > previousX, "actual macro has increasing calibrated gates");
+            previousX = x;
+        }
+        std::cout << "PASS: supplied .slc matched " << reference.inputs.size() << " recorded inputs\n";
     }
     std::cout << "PASS: " << checks << " checks; 2000 deterministic malformed-input mutations\n";
     return 0;

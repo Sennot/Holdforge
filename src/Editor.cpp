@@ -6,7 +6,7 @@
 #include <unordered_map>
 using namespace geode::prelude;
 namespace hf {
-Prepared prepare(LevelEditorLayer* editor, Replay const& replay) {
+Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration const* calibration) {
     if (!editor || LevelEditorLayer::get() != editor) throw Error("EDITOR_CLOSED", "Editor session changed");
     if (editor->m_playbackMode != PlaybackMode::Not || editor->m_playbackActive)
         throw Error("EDITOR_PLAYING", "Stop playtest and music playback first");
@@ -56,8 +56,16 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay) {
     effective["offset_ms"] = cfg.offsetMs; effective["unsafe_timeline"] = unsafe;
     effective["x_offset"] = mod->getSettingValue<double>("x-offset");
     effective["shared_dual_runtime_fix"] = mod->getSettingValue<bool>("shared-dual-fix") && !cfg.twoPlayer;
-    debug.set("effective_conversion", effective);
     out.plan = plan(replay, cfg);
+    if (calibration) {
+        if (cfg.twoPlayer || calibration->levelHash != hash)
+            throw Error("TRACE_LEVEL", "Recorded positions need the unmodified original level. Remove the old hold triggers first. The level must match the recorded run.");
+        if (cfg.offsetMs != 0 || mod->getSettingValue<double>("x-offset") != 0)
+            throw Error("TRACE_OFFSET", "Set Timing offset and Position offset to zero for recorded positions");
+        out.plan.warnings.push_back("Recorded positions loaded; verify trigger phase and gameplay in GD.");
+    }
+    effective["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
+    debug.set("effective_conversion", effective);
     if (!cfg.twoPlayer && mod->getSettingValue<bool>("shared-dual-fix"))
         out.plan.warnings.push_back("Shared dual compatibility requires HoldForge enabled while playing. Keep the generated editor layer unchanged.");
     out.plan.warnings.insert(out.plan.warnings.end(), warnings.begin(), warnings.end());
@@ -68,11 +76,12 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay) {
     // Use GD's portal-aware time map. Never estimate x with frame * a fixed speed.
     editor->dirtifyTriggers();
     for (auto const& gate : out.plan.gates) {
-        auto point = editor->posForTime(static_cast<float>(gate.seconds));
+        auto point = calibration ? CCPoint{gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}
+                                 : editor->posForTime(static_cast<float>(gate.seconds));
         if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x <= previous)
             throw Error("MAP_NON_MONOTONIC", "Timeline has overlapping/reversed X positions; use a trajectory-based conversion");
         float back = editor->timeForPos(point, 0, 0, false, 0);
-        if (!std::isfinite(back) || (!unsafe && std::abs(back - gate.seconds) > 1.0 / 240.0))
+        if (!calibration && (!std::isfinite(back) || (!unsafe && std::abs(back - gate.seconds) > 1.0 / 240.0)))
             throw Error("MAP_ROUNDTRIP", "Editor time/position roundtrip differs by more than one physics tick");
         previous = point.x;
         Placement p{gate, point.x + dx, y, {}};
@@ -83,6 +92,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay) {
             auto row = matjson::Value::object(); row["frame"] = gate.frame; row["seconds"] = gate.seconds;
             row["x"] = p.x; row["y"] = p.y; row["roundtrip_seconds"] = back;
             row["p1"] = gate.p1; row["p2"] = gate.p2;
+            row["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
             if (mod->getSettingValue<bool>("debug-objects")) row["object"] = p.object;
             debug.event("placement", row);
         }

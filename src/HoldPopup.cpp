@@ -69,7 +69,7 @@ void HoldPopup::onImport(CCObject*) {
             auto path = result.unwrap(); if (!path) return;
             try {
                 Diagnostics::get().begin();
-                m_prepared.reset(); m_replay.reset(); m_applied = false;
+                m_prepared.reset(); m_replay.reset(); m_calibration.reset(); m_applied = false;
                 m_create->setEnabled(false); m_create->setOpacity(110);
                 drawTimeline();
                 m_file->setString(utils::string::pathToString(path->filename()).c_str());
@@ -77,6 +77,9 @@ void HoldPopup::onImport(CCObject*) {
                 m_stats->setString("Reading macro...");
                 Diagnostics::get().set("selected_file", utils::string::pathToString(path->filename()));
                 m_replay = read(*path);
+                auto tracePath = *path; tracePath.replace_extension(".hftrace");
+                if (std::filesystem::exists(tracePath)) m_calibration = readCalibration(tracePath, *m_replay);
+                Diagnostics::get().set("recorded_positions", m_calibration.has_value());
                 auto& replay = *m_replay;
                 auto meta = matjson::Value::object();
                 meta["filename"] = utils::string::pathToString(path->filename());
@@ -101,11 +104,12 @@ void HoldPopup::onAnalyze(CCObject*) {
     if (!m_replay) { status("Import a macro first", true); return; }
     if (m_applied) { status("Batch already created. Close and use Undo to retry.", true); return; }
     try {
-        m_prepared = prepare(m_editor, *m_replay);
+        m_prepared = prepare(m_editor, *m_replay, m_calibration ? &*m_calibration : nullptr);
         auto const& p = m_prepared->plan;
         auto stats = fmt::format("SLC{}  /  {} TPS  /  {} triggers  /  {:.2f}s", m_replay->format, m_replay->tps, p.gates.size(), p.duration);
         m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(380, .31f, .17f);
-        status(fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
+        status(m_calibration ? "Recorded positions ready - Create, then hold-test" :
+            fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
         m_create->setEnabled(true); m_create->setOpacity(255); drawTimeline();
     } catch (std::exception const& e) { failure(e); }
 }
@@ -113,7 +117,7 @@ void HoldPopup::onCreate(CCObject*) {
     if (!m_replay || !m_prepared || m_applied) return;
     try {
         // Re-evaluate the current settings and level immediately before mutation.
-        m_prepared = prepare(m_editor, *m_replay);
+        m_prepared = prepare(m_editor, *m_replay, m_calibration ? &*m_calibration : nullptr);
         auto count = apply(m_editor, *m_prepared); m_applied = true;
         m_create->setEnabled(false); m_create->setOpacity(110);
         status(fmt::format("Created {} triggers - one Undo restores the batch", count));

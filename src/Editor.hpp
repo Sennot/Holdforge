@@ -1,6 +1,7 @@
 #pragma once
 #include <Geode/Geode.hpp>
 #include "core/Plan.hpp"
+#include "core/Calibration.hpp"
 namespace hf {
 struct Placement { Gate gate; float x = 0, y = 0; std::string object; };
 struct Prepared {
@@ -8,6 +9,6 @@ struct Prepared {
     std::vector<Placement> placements;
     std::string levelBefore;
 };
-Prepared prepare(LevelEditorLayer* editor, Replay const& replay);
+Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration const* calibration = nullptr);
 size_t apply(LevelEditorLayer* editor, Prepared const& prepared);
 }

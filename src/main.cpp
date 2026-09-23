@@ -4,10 +4,42 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include "HoldPopup.hpp"
 #include "Diagnostics.hpp"
-#include "core/SharedInputScope.hpp"
+#include "core/HeldInput.hpp"
 using namespace geode::prelude;
 
 namespace {
+GJBaseGameLayer* inputOwner = nullptr;
+hf::HeldInput capturedInput;
+int optionsDepth = 0;
+hf::HeldInput& inputs(GJBaseGameLayer* layer) {
+    if (inputOwner != layer) { inputOwner = layer; capturedInput = {}; }
+    return capturedInput;
+}
+void resetInputs(GJBaseGameLayer* layer) { inputOwner = layer; capturedInput = {}; }
+struct NativeOptionsScope {
+    GameOptionsTrigger* object;
+    GameOptionsSetting p1, p2;
+    NativeOptionsScope(GameOptionsTrigger* value) : object(value), p1(value->m_disableP1Controls), p2(value->m_disableP2Controls) {
+        ++optionsDepth;
+        object->m_disableP1Controls = object->m_disableP2Controls = GameOptionsSetting::Disabled;
+    }
+    ~NativeOptionsScope() {
+        object->m_disableP1Controls = p1; object->m_disableP2Controls = p2;
+        --optionsDepth;
+    }
+};
+void applyHoldGate(PlayerObject* player, bool blocked, bool held) {
+    if (!player) return;
+    auto it = player->m_holdingButtons.find(1);
+    bool holding = it != player->m_holdingButtons.end() && it->second;
+    bool desired = !blocked && held;
+    // Control the input edge explicitly. Letting the native Options handler
+    // infer it from UILayer loses queued/CBF input and single-input P2 holds.
+    player->m_controlsDisabled = false;
+    if (desired && !holding) player->pushButton(static_cast<PlayerButton>(1));
+    else if (!desired && (holding || player->m_jumpBuffered)) player->releaseButton(static_cast<PlayerButton>(1));
+    player->m_controlsDisabled = blocked;
+}
 // A private container, not another CCMenu mixed into a game's menu hierarchy.
 // It is attached after the complete editor initialization hook chain returns.
 class HFLauncher final : public CCNode {
@@ -78,7 +110,8 @@ bool holdGate(GameOptionsTrigger* object) {
         object->m_editorLayer == Mod::get()->getSettingValue<int64_t>("editor-layer");
 }
 bool primaryHeld(GJBaseGameLayer* layer) {
-    return layer->m_uiLayer && (layer->m_uiLayer->m_p1Jumping || layer->m_uiLayer->m_p1TouchId != -1);
+    bool ui = layer->m_uiLayer && (layer->m_uiLayer->m_p1Jumping || layer->m_uiLayer->m_p1TouchId != -1);
+    return inputs(layer).held(ui);
 }
 matjson::Value state(GJBaseGameLayer* layer) {
     auto row = matjson::Value::object(); row["progress_tick"] = layer->m_gameState.m_currentProgress;
@@ -89,9 +122,11 @@ matjson::Value state(GJBaseGameLayer* layer) {
     row["editor"] = layer == LevelEditorLayer::get();
     row["time_warp"] = layer->m_gameState.m_timeWarp;
     if (layer->m_uiLayer) {
-        row["physical_p1"] = primaryHeld(layer);
+        row["physical_p1"] = layer->m_uiLayer->m_p1Jumping || layer->m_uiLayer->m_p1TouchId != -1;
         row["physical_p2"] = layer->m_uiLayer->m_p2Jumping || layer->m_uiLayer->m_p2TouchId != -1;
     }
+    row["captured_input_seen"] = inputs(layer).seen;
+    row["effective_hold_p1"] = primaryHeld(layer);
     auto playerState = [&](PlayerObject* p, std::string const& key) {
         if (!p) return;
         row[key + "_x"] = p->getPositionX(); row[key + "_y"] = p->getPositionY();
@@ -117,16 +152,19 @@ class $modify(HFTrace, GJBaseGameLayer) {
             m_fields->sharedGateSeen = true;
             m_fields->lastGateTime = m_gameState.m_levelTime;
         }
-        bool bridge = marked && m_gameState.m_isDualMode && m_uiLayer;
+        bool bridge = marked;
         bool logging = trace() && object;
         auto before = logging ? state(this) : matjson::Value();
         if (bridge) {
-            // P2's independent physical input is normally false in single-input dual.
-            // Let the native Options handler see the same held input for both gates.
-            // Restore UI state before returning; never generate another P1 press.
-            hf::SharedInputScope scope(m_uiLayer->m_p2Jumping, m_uiLayer->m_p2TouchId,
-                m_uiLayer->m_p1Jumping, m_uiLayer->m_p1TouchId);
-            GJBaseGameLayer::processOptionsTrigger(object);
+            bool blocked = object->m_disableP1Controls == GameOptionsSetting::On;
+            {
+                NativeOptionsScope scope(object);
+                GJBaseGameLayer::processOptionsTrigger(object);
+            }
+            bool held = primaryHeld(this);
+            applyHoldGate(m_player1, blocked, held);
+            if (m_gameState.m_isDualMode) applyHoldGate(m_player2, blocked, held);
+            else if (m_player2) m_player2->m_controlsDisabled = blocked;
         } else GJBaseGameLayer::processOptionsTrigger(object);
         if (!logging) return;
         auto row = state(this); row["trigger_x"] = object->getPositionX();
@@ -145,12 +183,8 @@ class $modify(HFTrace, GJBaseGameLayer) {
         // A newly spawned P2 may reset its gate. Restore the active shared hold
         // without replaying the whole Options trigger (which would re-press P1).
         if (!wasDual && m_gameState.m_isDualMode && sharedFix(this) &&
-            m_fields->sharedGateSeen && m_player1 && m_player2 && m_uiLayer) {
-            m_player2->m_controlsDisabled = m_player1->m_controlsDisabled;
-            bool down = !m_player2->m_controlsDisabled && primaryHeld(this);
-            if (down) {
-                if (!m_player2->m_jumpBuffered) m_player2->pushButton(static_cast<PlayerButton>(1));
-            } else m_player2->releaseButton(static_cast<PlayerButton>(1));
+            m_fields->sharedGateSeen && m_player1 && m_player2) {
+            applyHoldGate(m_player2, m_player1->m_controlsDisabled, primaryHeld(this));
             restored = true;
         }
         if (logging) {
@@ -161,13 +195,24 @@ class $modify(HFTrace, GJBaseGameLayer) {
         }
     }
     void handleButton(bool down, int button, bool player1) {
+        if (!optionsDepth && button == 1 && (player1 || (m_levelSettings && !m_levelSettings->m_twoPlayerMode)))
+            inputs(this).event(down);
         GJBaseGameLayer::handleButton(down, button, player1);
+        if (!optionsDepth && button == 1 && m_fields->sharedGateSeen && sharedFix(this) && m_player1) {
+            bool blocked = m_player1->m_controlsDisabled;
+            applyHoldGate(m_player1, blocked, primaryHeld(this));
+            if (m_gameState.m_isDualMode) applyHoldGate(m_player2, blocked, primaryHeld(this));
+        }
         if (!trace()) return;
         auto row = state(this); row["down"] = down; row["button"] = button; row["player1"] = player1;
         hf::Diagnostics::get().event("button", row);
     }
 };
 class $modify(HFPlayTrace, PlayLayer) {
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        resetInputs(this);
+        return PlayLayer::init(level, useReplay, dontCreateObjects);
+    }
     void resetLevel() {
         PlayLayer::resetLevel();
         if (trace()) hf::Diagnostics::get().event("attempt_reset", state(this));
@@ -191,6 +236,7 @@ class $modify(HFPlayTrace, PlayLayer) {
 };
 class $modify(HFEditorTrace, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {
+        resetInputs(this);
         hf::Diagnostics::get().event("editor_init_begin");
         if (!LevelEditorLayer::init(level, noUI)) return false;
         hf::Diagnostics::get().event("editor_init_complete");

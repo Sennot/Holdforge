@@ -3,3 +3,6 @@
 *.pdb
 *.dll
 .DS_Store
+
+# Personal recorded positions are distributed locally, not committed.
+/calibration/*.hftrace

@@ -11,7 +11,7 @@ std::filesystem::path Diagnostics::folder() { return Mod::get()->getSaveDir() / 
 void Diagnostics::begin() {
     m_journal.close(); m_events.clear(); m_dropped = 0; m_written = 0;
     m_summary = matjson::Value::object(); m_session = stamp();
-    m_summary["schema"] = 2; m_summary["session"] = m_session;
+    m_summary["schema"] = 3; m_summary["session"] = m_session;
     m_summary["mod"] = Mod::get()->getVersion().toVString();
     m_summary["sdk"] = "5.10.1"; m_summary["target_gd"] = "2.2081";
     m_summary["loader"] = Loader::get()->getVersion().toVString();
