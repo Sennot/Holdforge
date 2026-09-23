@@ -1,12 +1,7 @@
 # HoldForge
 
-Import Silicate `.slc` v2/v3 macros and convert jump press/release events to native
-Options Triggers in the level editor. Open **HoldForge** using the **HF** button
-on the left side of the editor while playtest is stopped.
+Import a Silicate replay, record its real in-game trajectory, and generate native
+Geometry Dash Options Triggers for a hold-only copy of the level.
 
-Includes dual/shared input, independent two-player streams, a hold timeline preview,
-a single undo entry per import, raw level backups and exportable debug reports.
-
-This initial version uses the editor's time map. Test the result in-game before
-saving. It is not a full replay physics simulator. Strict mode blocks known
-mechanics that cannot be reliably mapped by a static timeline.
+0.1.4 does not repair gameplay at runtime. Final levels must be validated with
+HoldForge disabled.

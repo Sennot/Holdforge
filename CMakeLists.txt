@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HoldForge VERSION 0.1.3 LANGUAGES CXX)
+project(HoldForge VERSION 0.1.4 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(HOLDFORGE_CORE_ONLY "Build standalone parser/planner tests without Geode" OFF)
@@ -16,7 +16,7 @@ if(NOT DEFINED ENV{GEODE_SDK})
     message(FATAL_ERROR "Set GEODE_SDK or build with GitHub Actions. For tests: -DHOLDFORGE_CORE_ONLY=ON")
 endif()
 add_library(${PROJECT_NAME} SHARED
-    src/main.cpp src/HoldPopup.cpp src/Editor.cpp src/Diagnostics.cpp
+    src/main.cpp src/HoldPopup.cpp src/Editor.cpp src/Diagnostics.cpp src/TraceRecorder.cpp
     src/core/Slc.cpp src/core/Plan.cpp src/core/Calibration.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE src)

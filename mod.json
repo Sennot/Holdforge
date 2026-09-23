@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.3",
+  "version": "v0.1.4",
   "developer": "HoldForge",
-  "description": "Turn Silicate macros into editor Options Triggers with dual input support and diagnostics.",
+  "description": "Convert Silicate macros into stock-GD native Options Triggers using an automatically recorded in-game trajectory.",
   "tags": [
     "editor",
     "utility"
@@ -16,12 +16,6 @@
     "conversion": {
       "type": "title",
       "name": "Conversion"
-    },
-    "shared-dual-fix": {
-      "type": "bool",
-      "name": "Shared dual hold compatibility",
-      "default": true,
-      "description": "Use captured jump events to apply paired P1/P2 hold gates on the Generated editor layer, including ordinary dual. Does not depend on UILayer input flags. Two Player Mode is untouched. Requires HoldForge enabled while playing; also works on existing generated gates."
     },
     "strict-240": {
       "type": "bool",
@@ -35,7 +29,7 @@
       "default": 0,
       "min": -1000,
       "max": 1000,
-      "description": "Positive = later. Use for in-game calibration. Applies to macro events, not the initial control block."
+      "description": "Legacy experimental fallback only. Automatic traces require 0 ms."
     },
     "x-offset": {
       "type": "float",
@@ -43,7 +37,7 @@
       "default": 0,
       "min": -300,
       "max": 300,
-      "description": "World-unit offset for every generated trigger, including the initial block. Prefer time offset across speed changes."
+      "description": "Legacy experimental fallback only. Automatic traces require 0; no universal X correction is assumed."
     },
     "trigger-y": {
       "type": "float",
@@ -76,11 +70,17 @@
       "type": "title",
       "name": "Experimental"
     },
+    "allow-static-fallback": {
+      "type": "bool",
+      "name": "Allow static timeline fallback",
+      "default": false,
+      "description": "Experimental only. Allows editor posForTime placement when no valid automatic trace exists. Not publication-safe without a stock-GD hold test."
+    },
     "unsafe-timeline": {
       "type": "bool",
       "name": "Experimental timeline",
       "default": false,
-      "description": "Allow dash, teleport, timewarp, Player Control and direction mechanics. Placement may be wrong. This is NOT a trajectory simulator; reversed or overlapping X remains rejected."
+      "description": "Allow selected dynamic mechanics only for the experimental editor-time fallback. Reverse/teleport/rotated gameplay remain rejected."
     },
     "allow-existing-controls": {
       "type": "bool",
@@ -113,8 +113,8 @@
     "debug-runtime": {
       "type": "bool",
       "name": "Trace playtest inputs and triggers",
-      "default": false,
-      "description": "Record Options before/after, dual transitions, physical input, jump buffers, modes, level time, normal-play death attempts/results, resets and editor damage. Noclip or other hooks can suppress deaths before this hook sees them. Adds logging overhead."
+      "default": true,
+      "description": "Log native Options before/after, actual buttons, P1/P2 state, dual transitions, deaths and playtest state into the one-file export. Logging only; never changes gameplay input."
     },
     "debug-objects": {
       "type": "bool",

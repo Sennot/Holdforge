@@ -1,6 +1,5 @@
 #include "core/Slc.hpp"
 #include "core/Plan.hpp"
-#include "core/HeldInput.hpp"
 #include "core/Calibration.hpp"
 #include <sstream>
 #include <cmath>
@@ -45,33 +44,30 @@ Bytes v2(int metaSize = 64) {
 }
 int main(int argc, char** argv) {
  try {
-    hf::HeldInput latch;
-    check(!latch.held(false) && latch.held(true), "UI fallback before captured input");
-    latch.event(true);
-    check(latch.held(false), "queued press survives false UI flag");
-    latch.event(false);
-    check(!latch.held(true), "captured release overrides stale UI flag");
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");
     check(r.actions.size() == 2 && r.actions[0].frame == 240 && r.actions[1].frame == 360, "delta frames");
     std::ostringstream header;
-    header << "HFTRACE1 " << std::hex << r.fingerprint << " 1234 " << std::dec << "2\n";
+    header << "HFTRACE2 " << std::hex << r.fingerprint << " 1234 " << std::dec << "0 1 2 previous-step-midpoint\n";
     auto readTrace = [&](std::string const& rows) {
         std::istringstream stream(header.str() + rows); return hf::readCalibration(stream, r);
     };
-    auto calibrated = readTrace("240 1 0 100.5\n360 0 0 200.5\n");
-    check(calibrated.position(240) == 100.25 && calibrated.position(360) == 200.25, "recorded crossing phase");
+    auto calibrated = readTrace(
+        "240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n"
+        "360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\n");
+    check(calibrated.position(240, -1, -1) == 100.25 && calibrated.position(360, 1, 1) == 200.25, "recorded shared crossing phase");
     check(calibrated.levelHash == 0x1234, "recorded level binding");
-    error([&] { readTrace("240 0 0 100.5\n360 0 0 200.5\n"); }, "TRACE_INPUT");
-    error([&] { readTrace("240 1 0 100.5\n360 0 0 90\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 100.5\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 100.5\n360 0 0 200.5\nextra"); }, "TRACE_TRAILING");
-    error([&] { calibrated.position(100); }, "TRACE_FRAME");
-    error([&] { std::istringstream stream("HFTRACE1 0 1234 2"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
+    error([&] { readTrace("240 0 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\n"); }, "TRACE_INPUT");
+    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 90 5 90 5 90.5 5 90.25 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\nextra"); }, "TRACE_TRAILING");
+    error([&] { calibrated.position(100, -1, 0); }, "TRACE_FRAME");
+    error([&] { std::istringstream stream("HFTRACE2 0 1234 0 1 2 previous-step-midpoint"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
+    error([&] { std::istringstream stream("HFTRACE1 0 1234 2"); hf::readCalibration(stream, r); }, "TRACE_HEADER");
     auto p = hf::plan(r, {});
-    check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial control gate");
-    check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "shared dual press");
+    check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial shared native control gate");
+    check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "ordinary dual mirrors shared native gate");
     check(p.gates[2].seconds == 1.5 && p.gates[2].p1 == 1, "release blocks");
     check(hf::parse(v3(s, 2, true, true)).actions.size() == 2, "zero size and unknown atom");
     for (int width : {1, 2, 4, 8}) {
@@ -148,12 +144,12 @@ int main(int argc, char** argv) {
     if (argc == 3) {
         auto actual = hf::read(argv[1]);
         auto reference = hf::readCalibration(std::filesystem::path(argv[2]), actual);
-        auto actualPlan = hf::plan(actual, {});
-        check(actual.actions.size() == reference.inputs.size(), "actual macro reference coverage");
+        hf::PlanConfig actualCfg; actualCfg.twoPlayer = reference.twoPlayer;
+        auto actualPlan = hf::plan(actual, actualCfg);
         double previousX = 0;
         for (auto const& g : actualPlan.gates) {
             if (!g.frame) continue;
-            auto x = reference.position(g.frame);
+            auto x = reference.position(g.frame, g.p1, g.p2);
             check(std::isfinite(x) && x > previousX, "actual macro has increasing calibrated gates");
             previousX = x;
         }
