@@ -1,7 +1,8 @@
 # HoldForge
 
 Import Silicate `.slc` v2/v3 macros and convert jump press/release events to native
-Options Triggers in the level editor. Open **HoldForge** from the editor pause menu.
+Options Triggers in the level editor. Open **HoldForge** using the **HF** button
+on the left side of the editor while playtest is stopped.
 
 Includes dual/shared input, independent two-player streams, a hold timeline preview,
 a single undo entry per import, raw level backups and exportable debug reports.

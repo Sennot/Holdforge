@@ -55,8 +55,11 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay) {
     effective["two_player"] = cfg.twoPlayer; effective["strict_240"] = cfg.strict240;
     effective["offset_ms"] = cfg.offsetMs; effective["unsafe_timeline"] = unsafe;
     effective["x_offset"] = mod->getSettingValue<double>("x-offset");
+    effective["shared_dual_runtime_fix"] = mod->getSettingValue<bool>("shared-dual-fix") && !cfg.twoPlayer;
     debug.set("effective_conversion", effective);
     out.plan = plan(replay, cfg);
+    if (!cfg.twoPlayer && mod->getSettingValue<bool>("shared-dual-fix"))
+        out.plan.warnings.push_back("Shared dual compatibility requires HoldForge enabled while playing. Keep the generated editor layer unchanged.");
     out.plan.warnings.insert(out.plan.warnings.end(), warnings.begin(), warnings.end());
     float y = static_cast<float>(mod->getSettingValue<double>("trigger-y"));
     float dx = static_cast<float>(mod->getSettingValue<double>("x-offset"));

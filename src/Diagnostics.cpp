@@ -11,13 +11,13 @@ std::filesystem::path Diagnostics::folder() { return Mod::get()->getSaveDir() / 
 void Diagnostics::begin() {
     m_journal.close(); m_events.clear(); m_dropped = 0; m_written = 0;
     m_summary = matjson::Value::object(); m_session = stamp();
-    m_summary["schema"] = 1; m_summary["session"] = m_session;
+    m_summary["schema"] = 2; m_summary["session"] = m_session;
     m_summary["mod"] = Mod::get()->getVersion().toVString();
     m_summary["sdk"] = "5.10.1"; m_summary["target_gd"] = "2.2081";
     m_summary["loader"] = Loader::get()->getVersion().toVString();
     m_summary["platform"] = "win64";
     auto settings = matjson::Value::object();
-    for (auto key : {"strict-240", "unsafe-timeline", "allow-existing-controls", "backup-level",
+    for (auto key : {"strict-240", "unsafe-timeline", "allow-existing-controls", "backup-level", "shared-dual-fix",
                     "debug-enabled", "debug-inputs", "debug-mapping", "debug-runtime", "debug-objects", "debug-mods"})
         settings[key] = Mod::get()->getSettingValue<bool>(key);
     settings["offset-ms"] = Mod::get()->getSettingValue<double>("offset-ms");
@@ -42,7 +42,7 @@ void Diagnostics::begin() {
         std::filesystem::remove(old, ec); ec.clear();
         if (std::filesystem::exists(current, ec)) { ec.clear(); std::filesystem::rename(current, old, ec); }
         m_journal.open(current, std::ios::trunc);
-        if (m_journal) m_journal << m_summary.dump() << '\n' << std::flush;
+        if (m_journal) m_journal << m_summary.dump(matjson::NO_INDENTATION) << '\n' << std::flush;
     }
     m_summary["journal_open"] = m_journal.is_open();
 }
@@ -59,7 +59,7 @@ void Diagnostics::event(std::string const& type, matjson::Value data) {
     event["timestamp_us"] = stamp(); event["data"] = std::move(data);
     if (m_events.size() >= cap) { m_events.pop_front(); ++m_dropped; }
     m_events.push_back(event);
-    if (m_journal && m_written < cap) { m_journal << event.dump() << '\n' << std::flush; ++m_written; }
+    if (m_journal && m_written < cap) { m_journal << event.dump(matjson::NO_INDENTATION) << '\n' << std::flush; ++m_written; }
 }
 std::filesystem::path Diagnostics::exportReport() {
     if (m_session.empty()) begin();

@@ -135,6 +135,7 @@ void HoldPopup::onHelp(CCObject*) {
     std::string message = "Use a <cy>copy of your level</c> and a full-start, clean macro.\n"
         "Press = allow control (-1); release = block (1).\n"
         "Dual shares P1. Two Player Mode uses independent P1/P2 streams.\n"
+        "Shared dual compatibility requires HoldForge enabled during play.\n"
         "Settings: timing offset, editor layer, debug traces.\n"
         "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
     if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;

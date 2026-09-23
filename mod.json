@@ -3,12 +3,13 @@
   "gd": { "win": "2.2081" },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.1",
+  "version": "v0.1.2",
   "developer": "HoldForge",
   "description": "Turn Silicate macros into editor Options Triggers with dual input support and diagnostics.",
   "tags": ["editor", "utility"],
   "settings": {
     "conversion": { "type": "title", "name": "Conversion" },
+    "shared-dual-fix": { "type": "bool", "name": "Shared dual hold compatibility", "default": true, "description": "Runtime workaround for normal dual, NOT Two Player Mode. Paired P1/P2 Options on the Generated editor layer use P1's held input for P2. Restores P2's gate on dual entry. Requires HoldForge enabled when playing; applies to existing generated triggers too. Disable to test native behavior." },
     "strict-240": { "type": "bool", "name": "Strict 240 TPS", "default": true, "description": "Reject non-240 TPS macros. Turning this off converts time, but does not reproduce custom-TPS physics." },
     "offset-ms": { "type": "float", "name": "Timing offset (ms)", "default": 0, "min": -1000, "max": 1000, "description": "Positive = later. Use for in-game calibration. Applies to macro events, not the initial control block." },
     "x-offset": { "type": "float", "name": "Position offset", "default": 0, "min": -300, "max": 300, "description": "World-unit offset for every generated trigger, including the initial block. Prefer time offset across speed changes." },
@@ -23,7 +24,7 @@
     "debug-enabled": { "type": "bool", "name": "Enable diagnostic journal", "default": true, "description": "Write a bounded latest.jsonl, flushing each event for crash diagnosis. Export logs creates a single JSON report." },
     "debug-inputs": { "type": "bool", "name": "Log decoded macro inputs", "default": false, "description": "Frame, input type, player, press/release and TPS. Re-import the macro after enabling." },
     "debug-mapping": { "type": "bool", "name": "Log time-to-position mapping", "default": true, "description": "Record each generated frame/time/X/P1/P2 and the editor timeline roundtrip." },
-    "debug-runtime": { "type": "bool", "name": "Trace playtest inputs and triggers", "default": false, "description": "Record button events, actual Options activations, editor damage, progress ticks and both player positions. Includes normal play as well as editor tests. Adds logging overhead." },
+    "debug-runtime": { "type": "bool", "name": "Trace playtest inputs and triggers", "default": false, "description": "Record Options before/after, dual transitions, physical input, jump buffers, modes, level time, normal-play death attempts/results, resets and editor damage. Noclip or other hooks can suppress deaths before this hook sees them. Adds logging overhead." },
     "debug-objects": { "type": "bool", "name": "Include generated object strings", "default": false, "description": "Include serialization in mapping events. Requires Log time-to-position mapping." },
     "debug-mods": { "type": "bool", "name": "Include mod versions", "default": true, "description": "Record installed mod IDs, versions and loaded state for compatibility diagnosis. Captured when importing." },
     "debug-max-events": { "type": "int", "name": "Diagnostic event limit", "default": 20000, "min": 100, "max": 100000, "description": "Report retains the newest N events. Crash journal writes the first N events of the session. Oldest ring entries are counted as dropped." }
