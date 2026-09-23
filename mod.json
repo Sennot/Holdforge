@@ -3,7 +3,7 @@
   "gd": { "win": "2.2081" },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.0",
+  "version": "v0.1.1",
   "developer": "HoldForge",
   "description": "Turn Silicate macros into editor Options Triggers with dual input support and diagnostics.",
   "tags": ["editor", "utility"],
