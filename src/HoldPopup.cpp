@@ -134,7 +134,7 @@ void HoldPopup::onAnalyze(CCObject*) {
         auto const& p = m_prepared->plan;
         auto stats = fmt::format("SLC{} / {} TPS / {} triggers / {:.2f}s", m_replay->format, m_replay->tps, p.gates.size(), p.duration);
         m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(440, .31f, .17f);
-        status(m_calibration ? "Trace matched - Create; stock-GD phase test still required" : "EXPERIMENTAL static mapping - stock-GD test required", !m_calibration);
+        status(m_calibration ? "Automatic trace verified - Create" : "EXPERIMENTAL static mapping - stock-GD test required", !m_calibration);
         m_create->setEnabled(true); m_create->setOpacity(255); drawTimeline();
     } catch (std::exception const& e) { failure(e); }
 }

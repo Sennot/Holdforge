@@ -137,6 +137,11 @@ class $modify(HFTrace, GJBaseGameLayer) {
 };
 
 class $modify(HFPlayTrace, PlayLayer) {
+    void levelComplete() {
+        hf::TraceRecorder::get().onLevelComplete(this);
+        PlayLayer::levelComplete();
+    }
+
     void resetLevel() {
         PlayLayer::resetLevel();
         if (trace()) hf::Diagnostics::get().event("attempt_reset", state(this));

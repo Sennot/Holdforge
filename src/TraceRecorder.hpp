@@ -24,7 +24,7 @@ struct TraceStepState {
 
 class TraceRecorder {
     struct Expected { uint64_t frame; bool down, p2; };
-    bool m_armed = false, m_attempt = false, m_failed = false, m_twoPlayer = false;
+    bool m_armed = false, m_attempt = false, m_failed = false, m_twoPlayer = false, m_completed = false;
     uint64_t m_macroHash = 0, m_levelHash = 0, m_stepSerial = 0;
     size_t m_index = 0;
     std::optional<uint64_t> m_lastMatchedFrame, m_lastMatchedStep;
@@ -53,6 +53,7 @@ public:
     void onStepEnd(GJBaseGameLayer* layer);
     void onButton(GJBaseGameLayer* layer, bool down, int button, bool player1);
     void onDamage(GJBaseGameLayer* layer, PlayerObject* player);
+    void onLevelComplete(GJBaseGameLayer* layer);
     void onPlaytestStop(LevelEditorLayer* editor);
 };
 }

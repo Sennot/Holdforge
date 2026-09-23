@@ -91,7 +91,7 @@ void TraceRecorder::arm(LevelEditorLayer* editor, Replay const& replay, std::fil
     m_macroHash = replay.fingerprint;
     m_levelHash = fingerprint(std::string(editor->getLevelString()));
     m_twoPlayer = cfg.twoPlayer; m_path = path;
-    m_armed = true; m_attempt = false; m_failed = false; m_error.clear();
+    m_armed = true; m_attempt = false; m_failed = false; m_completed = false; m_error.clear();
     m_index = 0; m_stepSerial = 0; m_actualDown = {false, false};
     m_lastMatchedFrame.reset(); m_lastMatchedStep.reset(); m_stepsPerMacroFrame.reset();
     m_currentPre.reset(); m_lastPre.reset(); m_lastPost.reset();
@@ -124,7 +124,7 @@ void TraceRecorder::onPlaytestStart(LevelEditorLayer* editor) {
     if (!m_armed) return;
     auto now = fingerprint(std::string(editor->getLevelString()));
     if (now != m_levelHash) { fail("TRACE_LEVEL_CHANGED", "Level changed after trace was armed"); return; }
-    m_attempt = true; m_failed = false; m_error.clear(); m_index = 0; m_stepSerial = 0;
+    m_attempt = true; m_failed = false; m_completed = false; m_error.clear(); m_index = 0; m_stepSerial = 0;
     m_actualDown = {false, false};
     m_lastMatchedFrame.reset(); m_lastMatchedStep.reset(); m_stepsPerMacroFrame.reset();
     m_currentPre.reset(); m_lastPre.reset(); m_lastPost.reset(); m_result.inputs.clear();
@@ -164,18 +164,12 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
         return;
     }
 
-    // Do not assume where Silicate's processQueuedButtons sits relative to processCommands.
-    // If handleButton is observed inside a command step, that step is the input step;
-    // if it is observed between steps, the input applies to the next command step.
-    bool insideStep = m_currentPre.has_value();
-    uint64_t inputStep = insideStep ? m_currentPre->serial : m_stepSerial + 1;
-
     // Verify the temporal signature without assuming m_currentProgress == macro frame.
-    // The scale between Silicate frames and GD command steps is learned from observed
-    // edges (it happened to be 2 in one old log, but that is never hard-coded).
+    // The scale between Silicate frames and GD command substeps is learned from
+    // observed edges (it was 2 in one prior log, but is not hard-coded).
     if (m_lastMatchedFrame && m_lastMatchedStep) {
         uint64_t df = expected.frame - *m_lastMatchedFrame;
-        uint64_t ds = inputStep - *m_lastMatchedStep;
+        uint64_t ds = m_stepSerial - *m_lastMatchedStep;
         if (df == 0) {
             if (ds != 0) { fail("TRACE_TIMING", "Same-frame macro edges arrived in different physics command steps"); return; }
         } else if (!m_stepsPerMacroFrame) {
@@ -192,18 +186,17 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
             }
         }
     }
-    m_lastMatchedFrame = expected.frame; m_lastMatchedStep = inputStep;
+    m_lastMatchedFrame = expected.frame; m_lastMatchedStep = m_stepSerial;
 
-    auto at = snapshot(layer, inputStep);
+    auto at = snapshot(layer, m_stepSerial);
     auto diag = matjson::Value::object();
     diag["edge_index"] = m_index; diag["macro_frame"] = expected.frame;
-    diag["down"] = down; diag["p2"] = p2; diag["inside_process_commands"] = insideStep;
-    diag["input_step"] = inputStep; diag["at_input"] = stepJson(at);
+    diag["down"] = down; diag["p2"] = p2; diag["at_input"] = stepJson(at);
     if (m_stepsPerMacroFrame) diag["steps_per_macro_frame"] = *m_stepsPerMacroFrame;
 
     if (expected.frame > 0) {
         if (!m_lastPre || !m_lastPost || m_lastPre->serial != m_lastPost->serial ||
-            m_lastPost->serial + 1 != inputStep) {
+            m_lastPost->serial + 1 != m_stepSerial) {
             fail("TRACE_PHASE", "No immediately preceding completed physics step for this input edge");
             return;
         }
@@ -219,7 +212,7 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
             return;
         }
         RecordedInput row;
-        row.frame = expected.frame; row.down = down; row.p2 = p2; row.step = inputStep;
+        row.frame = expected.frame; row.down = down; row.p2 = p2; row.step = m_stepSerial;
         auto target = p2 ? at.p2 : at.p1;
         row.inputX = target.x; row.inputY = target.y;
         row.phasePreX = preX; row.phasePreY = preY; row.phasePostX = postX; row.phasePostY = postY;
@@ -240,9 +233,15 @@ void TraceRecorder::onDamage(GJBaseGameLayer* layer, PlayerObject*) {
         fail("TRACE_DEATH", "Source macro attempt took damage before completion");
 }
 
+void TraceRecorder::onLevelComplete(GJBaseGameLayer* layer) {
+    if (!active() || layer != LevelEditorLayer::get()) return;
+    m_completed = true;
+    Diagnostics::get().event("trace_level_complete");
+}
+
 void TraceRecorder::onPlaytestStop(LevelEditorLayer* editor) {
     if (!m_armed || !m_attempt) return;
-    bool completed = editor && editor->m_levelEndAnimationStarted;
+    bool completed = m_completed;
     if (!m_failed && m_index != m_expected.size())
         fail("TRACE_INCOMPLETE", fmt::format("Playtest stopped after {}/{} expected edges", m_index, m_expected.size()));
     if (!m_failed && !completed)

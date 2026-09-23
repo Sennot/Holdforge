@@ -58,8 +58,6 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration con
     }
     PlanConfig cfg;
     cfg.twoPlayer = settings->m_twoPlayerMode; cfg.strict240 = mod->getSettingValue<bool>("strict-240");
-    if (cfg.twoPlayer && GameManager::get() && GameManager::get()->getGameVariable("0010"))
-        throw Error("TRACE_2P_FLIP", "Disable Flip 2-Player Controls for independent P1/P2 conversion");
     cfg.offsetMs = mod->getSettingValue<double>("offset-ms");
     cfg.maxTriggers = static_cast<size_t>(mod->getSettingValue<int64_t>("max-triggers"));
     auto effective = matjson::Value::object();

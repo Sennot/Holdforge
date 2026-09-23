@@ -14,7 +14,7 @@
 
 This environment cannot launch Geometry Dash, so these are **not claimed as verified**:
 
-- exact native Options-trigger phase for press/release around the recorded command step (the recorder now records whether input arrived inside `processCommands` or between steps, but does not pretend that this alone proves stock trigger ordering);
+- exact native Options-trigger phase for press/release around the recorded command step;
 - ordinary dual behavior with one shared stream mirrored to native P1/P2 controls across dual entry/exit;
 - independent P1/P2 behavior in actual 2 Player Mode;
 - speed portals, short presses, orbs, dash/time-warp cases listed in `IN_GAME_TESTS.md`;
