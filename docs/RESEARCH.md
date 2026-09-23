@@ -1,21 +1,7 @@
-# Research notes — 0.1.4
+# Research notes — 0.1.6
 
-Проверено 23 сентября 2026.
+Target: GD 2.2081 / Geode 5.10.1. Silicate playback ultimately reaches GD input handling through queued buttons; HoldForge observes the resulting native `GJBaseGameLayer::handleButton` without injecting input.
 
-- Silicate: https://git.silicate.dev/silicate/silicate/
-  В replay hook события текущего replay frame ставятся через `queueButton(...)`, после
-  чего вызывается штатный `GJBaseGameLayer::processQueuedButtons(...)`. Поэтому
-  HoldForge записывает фактический `handleButton` и границы `processCommands`, а не
-  выводит macro frame из `m_currentProgress`.
-- Geode bindings GD 2.2081:
-  https://github.com/geode-sdk/bindings/blob/7f6c2a75742856de88dad354e576dcff8a28e881/bindings/2.2081/GeometryDash.bro
-  Используются `processCommands`, `processOptionsTrigger`, `handleButton`,
-  `toggleDualMode`, `LevelEditorLayer::onPlaytest/onStopPlaytest/playerTookDamage` и
-  поля GameOptionsTrigger 165/199.
-- Geode SDK 5.10.1 / build action: workflow закрепляет SDK 5.10.1, Win64 и указанный
-  bindings commit.
+The 0.1.5 diagnostic run established `handleButton` as the reliable synchronization point for this editor workflow: all 412 macro edges were observed in order, with `level_time == frame / 240` within a tiny floating-point error, while the attempted `processCommands` phase capture was absent. HFTRACE3 therefore stores the actual input-edge time and position instead of rejecting on a missing command-step bracket.
 
-`previous-step-midpoint` — инженерная фаза 0.1.4: trigger помещается внутри реально
-пройденного P1 X-интервала непосредственно перед фактическим input edge. Это устраняет
-переменный drift `posForTime()` и общий X-offset, но правильность именно штатной
-Options-семантики при непрерывном hold/dual должна быть подтверждена matrix-test в GD.
+Native Options behavior and exact publication-safe activation phase still require in-game tests with HoldForge disabled after generation.

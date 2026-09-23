@@ -4,7 +4,6 @@
 #include "core/Slc.hpp"
 #include <array>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,19 +24,13 @@ struct TraceStepState {
 class TraceRecorder {
     struct Expected { uint64_t frame; bool down, p2; };
     bool m_armed = false, m_attempt = false, m_failed = false, m_twoPlayer = false;
-    uint64_t m_macroHash = 0, m_levelHash = 0, m_stepSerial = 0;
+    uint64_t m_macroHash = 0, m_levelHash = 0;
     double m_macroTps = 240.0;
     size_t m_index = 0;
-    std::optional<uint64_t> m_lastMatchedFrame;
     std::array<bool, 2> m_actualDown{false, false};
     std::filesystem::path m_path;
     std::vector<Expected> m_expected;
     Calibration m_result;
-    std::optional<TraceStepState> m_currentPre;
-    std::optional<TraceStepState> m_lastPre;
-    std::optional<TraceStepState> m_lastPost;
-    std::optional<TraceStepState> m_lastMovingPre;
-    std::optional<TraceStepState> m_lastMovingPost;
     std::string m_error;
 
     static TraceStepState snapshot(GJBaseGameLayer* layer, uint64_t serial);
@@ -51,8 +44,6 @@ public:
     std::string status() const;
 
     void onPlaytestStart(LevelEditorLayer* editor);
-    void onStepBegin(GJBaseGameLayer* layer);
-    void onStepEnd(GJBaseGameLayer* layer);
     void onButton(GJBaseGameLayer* layer, bool down, int button, bool player1);
     void onDamage(GJBaseGameLayer* layer, PlayerObject* player);
     void onPlaytestStop(LevelEditorLayer* editor);

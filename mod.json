@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.5",
+  "version": "v0.1.6",
   "developer": "HoldForge",
-  "description": "Convert Silicate macros into stock-GD native Options Triggers using an automatically recorded in-game trajectory.",
+  "description": "Convert Silicate macros into stock-GD native Options Triggers using an editor-playtest input-edge trace.",
   "tags": [
     "editor",
     "utility"

@@ -1,8 +1,8 @@
-# HoldForge 0.1.4 — Silicate `.slc` → stock-GD hold level
+# HoldForge 0.1.6 — Silicate `.slc` → stock-GD hold level
 
 Target: Geometry Dash 2.2081, Geode SDK 5.10.1, Windows x64.
 
-## Главное изменение 0.1.4
+## Главное изменение 0.1.6
 
 0.1.3 runtime-bridge удалён полностью. HoldForge больше не подменяет `processOptionsTrigger`,
 не вызывает `PlayerObject::pushButton/releaseButton` и не чинит dual во время игры.
@@ -29,17 +29,15 @@ Trace привязан к FNV-отпечаткам конкретного `.slc`
 ## Как размещаются триггеры
 
 Макро-кадр не выводится из `m_currentProgress`. HoldForge сопоставляет фактически
-полученные jump press/release по порядку с событиями макроса. Для каждого события
-сохраняются состояние ввода и P1/P2, а также координаты до/после непосредственно
-предыдущего `processCommands` шага. Trigger X ставится внутрь этого фактически
-измеренного интервала (midpoint), поэтому нет общего `-0.25` и нет одного offset,
-маскирующего переменный drift.
+полученные `handleButton` jump press/release по порядку с событиями макроса и проверяет
+`m_levelTime` против `frame / TPS`. Для каждого совпавшего edge сохраняются реальный X/Y
+игрока и состояние dual непосредственно в момент входа. Trigger X берётся из измеренного
+P1 X этого input-edge: общего `-0.25` и глобального drift-offset нет.
 
-Trace записывает фактическую траекторию также через speed portals, короткие taps, орбы,
-dash/timewarp и dual; публикационная поддержка этих случаев остаётся неподтверждённой до
-matrix-test в GD. Если два разных по времени события нельзя упорядочить по X,
-либо X идёт назад, trace/генерация отклоняются. Reverse, teleport и rotated gameplay
-пока явно не поддерживаются: для них нужен отдельный нативный алгоритм, а не offset.
+0.1.6 намеренно не требует `processCommands` для принятия trace: на предоставленном
+0.1.5 журнале этот hook не дал фазовый сегмент, хотя все 412/412 `handleButton` edges
+совпали с SLC и шли по строго возрастающему X. Reverse, teleport и rotated gameplay
+по-прежнему отклоняются; нативную Options-фазу всё равно нужно подтвердить тестом в GD.
 
 ## Dual
 

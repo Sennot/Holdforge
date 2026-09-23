@@ -49,22 +49,25 @@ int main(int argc, char** argv) {
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");
     check(r.actions.size() == 2 && r.actions[0].frame == 240 && r.actions[1].frame == 360, "delta frames");
     std::ostringstream header;
-    header << "HFTRACE2 " << std::hex << r.fingerprint << " 1234 " << std::dec << "0 1 2 previous-step-midpoint\n";
+    header << "HFTRACE3 " << std::hex << r.fingerprint << " 1234 " << std::dec << "0 1 2 input-edge-snapshot\n";
     auto readTrace = [&](std::string const& rows) {
         std::istringstream stream(header.str() + rows); return hf::readCalibration(stream, r);
     };
     auto calibrated = readTrace(
-        "240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n"
-        "360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\n");
-    check(calibrated.position(240, -1, -1) == 100.25 && calibrated.position(360, 1, 1) == 200.25, "recorded shared crossing phase");
+        "240 1 0 1 1.0 100.5 5 100.5 0\n"
+        "360 0 0 2 1.5 200.5 5 200.5 0\n");
+    check(calibrated.position(240, -1, -1) == 100.5 && calibrated.position(360, 1, 1) == 200.5, "recorded input-edge positions");
     check(calibrated.levelHash == 0x1234, "recorded level binding");
-    error([&] { readTrace("240 0 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\n"); }, "TRACE_INPUT");
-    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 90 5 90 5 90.5 5 90.25 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 10 100.5 5 100 5 100.5 5 100.25 0\n360 0 0 20 200.5 5 200 5 200.5 5 200.25 0\nextra"); }, "TRACE_TRAILING");
+    error([&] { readTrace("240 0 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 200.5 5 200.5 0\n"); }, "TRACE_INPUT");
+    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 90 5 90 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.2 200.5 5 200.5 0\n"); }, "TRACE_TIMING");
+    error([&] { readTrace("240 1 0 2 1.0 100.5 5 100.5 0\n360 0 0 3 1.5 200.5 5 200.5 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.4 0\n360 0 0 2 1.5 200.5 5 200.5 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n"); }, "TRACE_ROW");
+    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 200.5 5 200.5 0\nextra"); }, "TRACE_TRAILING");
     error([&] { calibrated.position(100, -1, 0); }, "TRACE_FRAME");
-    error([&] { std::istringstream stream("HFTRACE2 0 1234 0 1 2 previous-step-midpoint"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
-    error([&] { std::istringstream stream("HFTRACE1 0 1234 2"); hf::readCalibration(stream, r); }, "TRACE_HEADER");
+    error([&] { std::istringstream stream("HFTRACE3 0 1234 0 1 2 input-edge-snapshot"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
+    error([&] { std::istringstream stream("HFTRACE2 0 1234 0 1 2 previous-step-midpoint"); hf::readCalibration(stream, r); }, "TRACE_HEADER");
     auto p = hf::plan(r, {});
     check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial shared native control gate");
     check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "ordinary dual mirrors shared native gate");

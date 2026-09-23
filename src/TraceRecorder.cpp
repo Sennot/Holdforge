@@ -5,7 +5,6 @@
 #include <Geode/ui/Notification.hpp>
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 
 using namespace geode::prelude;
 namespace hf {
@@ -84,7 +83,7 @@ void TraceRecorder::arm(LevelEditorLayer* editor, Replay const& replay, std::fil
         size_t p = a.p2 ? 1 : 0;
         if (down[p] == a.down) continue;
         down[p] = a.down;
-        m_expected.push_back({a.frame, a.down, a.p2});
+        if (a.frame) m_expected.push_back({a.frame, a.down, a.p2});
     }
     if (m_expected.empty()) throw Error("TRACE_ARM_EMPTY", "Macro has no usable jump edges");
 
@@ -93,10 +92,7 @@ void TraceRecorder::arm(LevelEditorLayer* editor, Replay const& replay, std::fil
     m_levelHash = fingerprint(std::string(editor->getLevelString()));
     m_twoPlayer = cfg.twoPlayer; m_path = path;
     m_armed = true; m_attempt = false; m_failed = false; m_error.clear();
-    m_index = 0; m_stepSerial = 0; m_actualDown = {false, false};
-    m_lastMatchedFrame.reset();
-    m_currentPre.reset(); m_lastPre.reset(); m_lastPost.reset();
-    m_lastMovingPre.reset(); m_lastMovingPost.reset();
+    m_index = 0; m_actualDown = {false, false};
     m_result = {}; m_result.macroHash = m_macroHash; m_result.levelHash = m_levelHash; m_result.twoPlayer = m_twoPlayer;
 
     auto row = matjson::Value::object();
@@ -104,16 +100,13 @@ void TraceRecorder::arm(LevelEditorLayer* editor, Replay const& replay, std::fil
     row["level_hash"] = fmt::format("{:016x}", m_levelHash);
     row["two_player"] = m_twoPlayer; row["expected_edges"] = m_expected.size();
     row["path"] = utils::string::pathToString(m_path.filename());
-    row["phase"] = "last-forward-physics-segment-midpoint";
+    row["phase"] = "input-edge-snapshot";
     Diagnostics::get().event("trace_armed", row);
 }
 
 void TraceRecorder::cancel() {
     m_armed = false; m_attempt = false; m_failed = false; m_error.clear();
     m_expected.clear(); m_result.inputs.clear();
-    m_lastMatchedFrame.reset();
-    m_currentPre.reset(); m_lastPre.reset(); m_lastPost.reset();
-    m_lastMovingPre.reset(); m_lastMovingPost.reset();
 }
 
 std::string TraceRecorder::status() const {
@@ -127,48 +120,30 @@ void TraceRecorder::onPlaytestStart(LevelEditorLayer* editor) {
     if (!m_armed) return;
     auto now = fingerprint(std::string(editor->getLevelString()));
     if (now != m_levelHash) { fail("TRACE_LEVEL_CHANGED", "Level changed after trace was armed"); return; }
-    m_attempt = true; m_failed = false; m_error.clear(); m_index = 0; m_stepSerial = 0;
-    m_actualDown = {false, false};
-    m_lastMatchedFrame.reset();
-    m_currentPre.reset(); m_lastPre.reset(); m_lastPost.reset();
-    m_lastMovingPre.reset(); m_lastMovingPost.reset(); m_result.inputs.clear();
+    m_attempt = true; m_failed = false; m_error.clear(); m_index = 0;
+    m_actualDown = {false, false}; m_result.inputs.clear();
     Diagnostics::get().event("trace_attempt_begin");
     Notification::create("HoldForge: recording macro trace", NotificationIcon::Info, 2.f)->show();
 }
 
-void TraceRecorder::onStepBegin(GJBaseGameLayer* layer) {
-    if (!active() || !layer) return;
-    ++m_stepSerial;
-    m_currentPre = snapshot(layer, m_stepSerial);
-}
-
-void TraceRecorder::onStepEnd(GJBaseGameLayer* layer) {
-    if (!active() || layer != LevelEditorLayer::get() || !m_currentPre) return;
-    m_lastPre = *m_currentPre;
-    m_lastPost = snapshot(layer, m_currentPre->serial);
-
-    // processCommands can run substeps where X does not advance. Do not let a
-    // zero-motion substep erase the last real movement segment; that caused the
-    // old TRACE_NON_FORWARD rejection on the very first Silicate edge.
-    if (std::isfinite(m_lastPre->p1.x) && std::isfinite(m_lastPost->p1.x) &&
-        m_lastPost->p1.x > m_lastPre->p1.x + 1e-6) {
-        m_lastMovingPre = *m_lastPre;
-        m_lastMovingPost = *m_lastPost;
-    }
-    m_currentPre.reset();
-}
-
 void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool player1) {
-    if (!active() || layer != LevelEditorLayer::get() || button != 1) return;
+    if (!active() || !layer || button != 1) return;
+    if (layer != LevelEditorLayer::get()) return;
+
     bool p2 = m_twoPlayer ? !player1 : false;
     size_t p = p2 ? 1 : 0;
     if (m_actualDown[p] == down) {
-        auto row = matjson::Value::object(); row["down"] = down; row["p2"] = p2; row["ignored_duplicate"] = true;
-        Diagnostics::get().event("trace_actual_input", row);
+        auto duplicate = matjson::Value::object(); duplicate["down"] = down; duplicate["p2"] = p2;
+        duplicate["ignored_duplicate"] = true;
+        Diagnostics::get().event("trace_actual_input", duplicate);
         return;
     }
     m_actualDown[p] = down;
-    if (m_index >= m_expected.size()) { fail("TRACE_EXTRA_INPUT", "More jump edges were observed than the macro contains"); return; }
+
+    if (m_index >= m_expected.size()) {
+        fail("TRACE_EXTRA_INPUT", "More jump edges were observed than the macro contains");
+        return;
+    }
     auto const expected = m_expected[m_index];
     if (expected.down != down || expected.p2 != p2) {
         fail("TRACE_INPUT_ORDER", fmt::format("Expected {} {} at macro frame {}, observed {} {}",
@@ -177,11 +152,7 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
         return;
     }
 
-    // Verify against GD simulation time, not m_currentProgress and not a fixed
-    // processCommands-to-frame ratio. In the supplied failing log, Silicate frame
-    // 228 arrived at level_time 0.95 exactly (= 228/240), while progress_tick was
-    // 458. This relation is therefore the stable check we want here.
-    auto at = snapshot(layer, m_stepSerial);
+    auto at = snapshot(layer, m_index + 1);
     double expectedTime = static_cast<double>(expected.frame) / m_macroTps;
     double timeError = std::abs(at.levelTime - expectedTime);
     double timeTolerance = std::max(0.010, 2.0 / m_macroTps);
@@ -191,88 +162,64 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
             expected.frame, expectedTime, at.levelTime, timeError * 1000.0));
         return;
     }
-    m_lastMatchedFrame = expected.frame;
+
+    // The diagnostic log supplied for 0.1.5 proves handleButton itself is the
+    // stable synchronization point in editor playtest: all 412 macro edges were
+    // observed in order and level_time matched frame / 240. processCommands was
+    // not a reliable hook point in this setup, so recording must not depend on it.
+    auto target = p2 ? at.p2 : at.p1;
+    double triggerX = at.p1.x; // level progression / trigger crossing follows the primary X timeline
+    if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(triggerX)) {
+        fail("TRACE_POSITION", "Non-finite player position at input edge");
+        return;
+    }
+    if (!m_result.inputs.empty() && triggerX <= m_result.inputs.back().triggerX + 1e-6) {
+        fail("TRACE_NON_MONOTONIC", fmt::format(
+            "Input-edge X did not advance: previous {:.6f}, current {:.6f}",
+            m_result.inputs.back().triggerX, triggerX));
+        return;
+    }
+
+    RecordedInput recorded;
+    recorded.frame = expected.frame;
+    recorded.down = down;
+    recorded.p2 = p2;
+    recorded.sequence = m_index + 1;
+    recorded.levelTime = at.levelTime;
+    recorded.inputX = target.x;
+    recorded.inputY = target.y;
+    recorded.triggerX = triggerX;
+    recorded.dual = at.dual;
+    m_result.inputs.push_back(recorded);
 
     auto diag = matjson::Value::object();
-    diag["edge_index"] = m_index; diag["macro_frame"] = expected.frame;
-    diag["expected_time"] = expectedTime; diag["time_error_ms"] = timeError * 1000.0;
-    diag["down"] = down; diag["p2"] = p2; diag["at_input"] = stepJson(at);
-
-    if (expected.frame > 0) {
-        if (!m_lastMovingPre || !m_lastMovingPost ||
-            m_lastMovingPre->serial != m_lastMovingPost->serial) {
-            fail("TRACE_PHASE", "No completed forward movement segment exists before this input edge");
-            return;
-        }
-
-        double preX = m_lastMovingPre->p1.x, preY = m_lastMovingPre->p1.y;
-        double postX = m_lastMovingPost->p1.x, postY = m_lastMovingPost->p1.y;
-        double dx = postX - preX;
-        if (!std::isfinite(preX) || !std::isfinite(postX) || dx <= 1e-6) {
-            fail("TRACE_NON_FORWARD", "Last real movement segment was not forward in X");
-            return;
-        }
-
-        // The input should occur at (or immediately after) the end of the most
-        // recent moving segment. This catches teleports/reverse discontinuities
-        // without pretending every processCommands call moves the player.
-        double inputX = at.p1.x;
-        double phaseGap = std::abs(inputX - postX);
-        double phaseTolerance = std::max(2.0, std::abs(dx) * 3.0);
-        if (!std::isfinite(inputX) || phaseGap > phaseTolerance) {
-            fail("TRACE_PHASE_GAP", fmt::format(
-                "Input X {:.3f} is too far from last movement end {:.3f} (gap {:.3f})",
-                inputX, postX, phaseGap));
-            return;
-        }
-
-        double triggerX = std::midpoint(preX, postX);
-        if (!m_result.inputs.empty() && triggerX + 1e-6 < m_result.inputs.back().triggerX) {
-            fail("TRACE_NON_MONOTONIC", "Recorded gate positions moved backwards");
-            return;
-        }
-        RecordedInput row;
-        row.frame = expected.frame; row.down = down; row.p2 = p2; row.step = m_stepSerial;
-        auto target = p2 ? at.p2 : at.p1;
-        row.inputX = target.x; row.inputY = target.y;
-        row.phasePreX = preX; row.phasePreY = preY; row.phasePostX = postX; row.phasePostY = postY;
-        row.triggerX = triggerX; row.dual = at.dual;
-        m_result.inputs.push_back(row);
-        diag["phase_before"] = stepJson(*m_lastMovingPre);
-        diag["phase_after"] = stepJson(*m_lastMovingPost);
-        diag["phase_gap_x"] = phaseGap;
-        diag["trigger_x"] = triggerX;
-    } else {
-        diag["frame_zero"] = true;
-    }
+    diag["edge_index"] = m_index;
+    diag["macro_frame"] = expected.frame;
+    diag["expected_time"] = expectedTime;
+    diag["time_error_ms"] = timeError * 1000.0;
+    diag["down"] = down; diag["p2"] = p2;
+    diag["capture"] = "handleButton-input-edge";
+    diag["trigger_x"] = triggerX;
+    diag["at_input"] = stepJson(at);
     Diagnostics::get().event("trace_actual_input", diag);
     ++m_index;
 }
 
 void TraceRecorder::onDamage(GJBaseGameLayer* layer, PlayerObject*) {
-    if (active() && layer)
+    if (active() && layer == LevelEditorLayer::get())
         fail("TRACE_DEATH", "Source macro attempt took damage before completion");
 }
 
 void TraceRecorder::onPlaytestStop(LevelEditorLayer* editor) {
     if (!m_armed || !m_attempt) return;
-
-    // Manual-stop semantics: the user explicitly ends the editor playtest after
-    // Silicate has replayed the source macro to the end. We do not require a
-    // PlayLayer/levelComplete callback here; LevelEditorLayer is the recording
-    // authority. Completeness is determined by matching every expected macro edge
-    // in order without a recorded death or other trace failure.
-    if (!editor || editor != LevelEditorLayer::get()) {
+    if (!editor || editor != LevelEditorLayer::get())
         fail("TRACE_EDITOR_LOST", "Editor layer changed before trace stop");
-    }
-    if (!m_failed && m_index != m_expected.size()) {
+    if (!m_failed && m_index != m_expected.size())
         fail("TRACE_INCOMPLETE", fmt::format(
             "Stop pressed after {}/{} expected edges; let Silicate replay all inputs before Stop",
             m_index, m_expected.size()));
-    }
-    if (!m_failed && m_result.inputs.empty()) {
-        fail("TRACE_EMPTY", "No calibrated input positions were captured");
-    }
+    if (!m_failed && m_result.inputs.size() != m_expected.size())
+        fail("TRACE_EMPTY", "Not every matched macro edge has a recorded input position");
 
     if (!m_failed) {
         try {
@@ -282,6 +229,7 @@ void TraceRecorder::onPlaytestStop(LevelEditorLayer* editor) {
             row["manual_stop_accepted"] = true;
             row["matched_edges"] = m_index;
             row["expected_edges"] = m_expected.size();
+            row["capture"] = "handleButton-input-edge";
             row["macro_hash"] = fmt::format("{:016x}", m_result.macroHash);
             row["level_hash"] = fmt::format("{:016x}", m_result.levelHash);
             Diagnostics::get().set("automatic_trace", row);

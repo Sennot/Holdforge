@@ -9,10 +9,9 @@ struct RecordedInput {
     uint64_t frame = 0;
     bool down = false;
     bool p2 = false;
-    uint64_t step = 0;
+    uint64_t sequence = 0;
+    double levelTime = 0;
     double inputX = 0, inputY = 0;
-    double phasePreX = 0, phasePreY = 0;
-    double phasePostX = 0, phasePostY = 0;
     double triggerX = 0;
     bool dual = false;
 };

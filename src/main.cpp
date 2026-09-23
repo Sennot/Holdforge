@@ -94,12 +94,6 @@ matjson::Value state(GJBaseGameLayer* layer) {
 }
 
 class $modify(HFTrace, GJBaseGameLayer) {
-    void processCommands(float dt, bool isHalfTick, bool isLastTick) {
-        hf::TraceRecorder::get().onStepBegin(this);
-        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
-        hf::TraceRecorder::get().onStepEnd(this);
-    }
-
     void processOptionsTrigger(GameOptionsTrigger* object) {
         bool logging = trace() && object;
         auto before = logging ? state(this) : matjson::Value();

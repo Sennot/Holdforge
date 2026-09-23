@@ -1,6 +1,6 @@
-HoldForge 0.1.4 no longer ships a reusable calibration profile.
+HoldForge automatic calibration profiles
 
-HFTRACE2 is generated automatically next to each .slc by the Record trace workflow.
-It is bound to that exact macro, exact source level serialization and 2 Player Mode.
-Old HFTRACE1 / 1.hftrace files from 0.1.3 are intentionally incompatible and must not
-be copied to a new macro or level.
+HFTRACE3 is generated next to each .slc by the Record trace workflow.
+It is bound to the macro fingerprint, serialized level fingerprint, and 2 Player Mode setting.
+Rows store the actual editor-playtest input-edge time and player position captured in handleButton.
+Old HFTRACE1/HFTRACE2 profiles are intentionally rejected; record a new profile.
