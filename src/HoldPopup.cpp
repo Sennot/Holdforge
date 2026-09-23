@@ -148,8 +148,10 @@ void HoldPopup::onRecord(CCObject*) {
         Diagnostics::get().set("trace_target", utils::string::pathToString(tracePath.filename()));
         onClose(nullptr);
         FLAlertLayer::create("HoldForge trace",
-            "Recorder armed. Start the <cy>Silicate replay from level start</c> in editor and let the attempt complete. "
-            "Stopping early, dying, wrong input order, or changing the level rejects the trace. Reopen HF and import the same .slc after completion.",
+            "Recorder armed. Start the <cy>Silicate replay from level start</c> in the editor. "
+            "When the macro reaches the end of the level, press the editor <cg>Stop</c> button. "
+            "Stop is the completion signal: all macro edges must have matched and no death/error may have occurred. "
+            "Then reopen HF and import the same .slc.",
             "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
@@ -175,7 +177,7 @@ void HoldPopup::onExport(CCObject*) {
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onHelp(CCObject*) {
-    std::string message = "1. Import .slc. 2. Record trace and replay the full source macro. 3. Re-import and Create.\n"
+    std::string message = "1. Import .slc. 2. Record trace, replay the full source macro in editor, then press editor Stop. 3. Re-import and Create.\n"
         "Press = allow (-1); release = block (1). Ordinary dual mirrors one shared stream to P1/P2; true 2 Player Mode is independent.\n"
         "Generated gameplay uses only stock Options behavior: HoldForge does not push/release player input at runtime.\n"
         "Publication check: test the saved copy by holding with HoldForge disabled. Export logs after any mismatch.";

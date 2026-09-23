@@ -5,7 +5,7 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.4",
+  "version": "v0.1.5",
   "developer": "HoldForge",
   "description": "Convert Silicate macros into stock-GD native Options Triggers using an automatically recorded in-game trajectory.",
   "tags": [

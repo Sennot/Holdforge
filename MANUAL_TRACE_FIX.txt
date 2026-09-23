@@ -1,0 +1,12 @@
+HoldForge 0.1.5 manual-stop trace fix
+
+Trace recording is editor-only.
+1. Import the .slc in HF.
+2. Press Record Trace.
+3. Start the Silicate replay from the beginning in the editor playtest.
+4. Let the macro reach the end.
+5. Press the editor Stop button.
+6. HF accepts Stop as completion if every expected macro edge matched in order and no death/error was recorded.
+7. Reopen HF, import the same .slc, and generate.
+
+No PlayLayer hook or levelComplete callback is required for trace completion.

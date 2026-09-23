@@ -1,7 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
-#include <Geode/modify/PlayLayer.hpp>
 #include "HoldPopup.hpp"
 #include "Diagnostics.hpp"
 #include "TraceRecorder.hpp"
@@ -133,32 +132,6 @@ class $modify(HFTrace, GJBaseGameLayer) {
         auto row = state(this); row["before"] = std::move(before);
         row["down"] = down; row["button"] = button; row["player1"] = player1;
         hf::Diagnostics::get().event("button", row);
-    }
-};
-
-class $modify(HFPlayTrace, PlayLayer) {
-    void levelComplete() {
-        hf::TraceRecorder::get().onLevelComplete(this);
-        PlayLayer::levelComplete();
-    }
-
-    void resetLevel() {
-        PlayLayer::resetLevel();
-        if (trace()) hf::Diagnostics::get().event("attempt_reset", state(this));
-    }
-    void destroyPlayer(PlayerObject* player, GameObject* object) {
-        bool logging = trace();
-        auto row = logging ? state(this) : matjson::Value();
-        if (logging) {
-            row["player2"] = player == m_player2;
-            if (object) { row["object_id"] = object->m_objectID; row["object_x"] = object->getPositionX(); row["object_y"] = object->getPositionY(); }
-            hf::Diagnostics::get().event("death_attempt", row);
-        }
-        PlayLayer::destroyPlayer(player, object);
-        if (logging) {
-            row["after"] = state(this); row["dead_after"] = player && player->m_isDead;
-            hf::Diagnostics::get().event("death_result", row);
-        }
     }
 };
 
