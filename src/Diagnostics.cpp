@@ -12,9 +12,9 @@ void Diagnostics::begin() {
     m_journal.close(); m_events.clear(); m_dropped = 0; m_written = 0;
     m_summary = matjson::Value::object(); m_session = stamp();
     m_summary["schema"] = 1; m_summary["session"] = m_session;
-    m_summary["mod"] = Mod::get()->getVersion().toString();
+    m_summary["mod"] = Mod::get()->getVersion().toVString();
     m_summary["sdk"] = "5.10.1"; m_summary["target_gd"] = "2.2081";
-    m_summary["loader"] = Loader::get()->getVersion().toString();
+    m_summary["loader"] = Loader::get()->getVersion().toVString();
     m_summary["platform"] = "win64";
     auto settings = matjson::Value::object();
     for (auto key : {"strict-240", "unsafe-timeline", "allow-existing-controls", "backup-level",
@@ -30,7 +30,7 @@ void Diagnostics::begin() {
         auto mods = matjson::Value::array();
         for (auto mod : Loader::get()->getAllMods()) {
             auto row = matjson::Value::object(); row["id"] = std::string(mod->getID());
-            row["version"] = mod->getVersion().toString(); row["loaded"] = mod->isLoaded();
+            row["version"] = mod->getVersion().toVString(); row["loaded"] = mod->isLoaded();
             mods.push(std::move(row));
         }
         m_summary["mods"] = std::move(mods);
