@@ -133,7 +133,7 @@ void TraceRecorder::onPlaytestStart(LevelEditorLayer* editor) {
 }
 
 void TraceRecorder::onStepBegin(GJBaseGameLayer* layer) {
-    if (!active() || layer != LevelEditorLayer::get()) return;
+    if (!active() || !layer) return;
     ++m_stepSerial;
     m_currentPre = snapshot(layer, m_stepSerial);
 }
@@ -229,12 +229,12 @@ void TraceRecorder::onButton(GJBaseGameLayer* layer, bool down, int button, bool
 }
 
 void TraceRecorder::onDamage(GJBaseGameLayer* layer, PlayerObject*) {
-    if (active() && layer == LevelEditorLayer::get())
+    if (active() && layer)
         fail("TRACE_DEATH", "Source macro attempt took damage before completion");
 }
 
 void TraceRecorder::onLevelComplete(GJBaseGameLayer* layer) {
-    if (!active() || layer != LevelEditorLayer::get()) return;
+    if (!active() || !layer) return;
     m_completed = true;
     Diagnostics::get().event("trace_level_complete");
 }
