@@ -20,7 +20,7 @@ private:
     Mode m_mode = Mode::None;
     bool m_twoPlayer = false, m_armed = false;
     size_t m_checkIndex = 0, m_gateIndex = 0, m_stepIndex = 0;
-    bool m_auto = false;
+    bool m_auto = false, m_manualDual = false;
     double m_maxDualError = 0;
     std::vector<AutoAnchor> m_anchors;
     std::unordered_map<int, size_t> m_autoTargets;

@@ -1,5 +1,7 @@
 #include "Editor.hpp"
 #include "Diagnostics.hpp"
+#include "core/NativeObjects.hpp"
+#include "core/ManualDual.hpp"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -29,8 +31,8 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     // Conservative gate: these mechanics can make an editor timeline differ from actual movement.
     std::unordered_map<int, std::string> risks{
         {1917, "Reverse"}, {1935, "TimeWarp"}, {3022, "Teleport trigger"},
-        {747, "Teleport portal"}, {749, "Teleport exit"}, {2064, "Unlinked teleport portal"},
-        {2065, "Teleport exit"}, {3027, "Teleport orb"}, {1704, "Dash orb"},
+        {747, "Teleport portal"}, {749, "Teleport exit"}, {native::unlinkedPortal, "Unlinked teleport portal"},
+        {native::unlinkedExit, "Unlinked teleport exit"}, {3027, "Teleport orb"}, {1704, "Dash orb"},
         {1751, "Gravity dash orb"}, {2900, "Gameplay rotation"},
         {2901, "Gameplay offset"}, {1932, "Player Control"}
     };
@@ -53,13 +55,15 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
             if (std::find(warnings.begin(), warnings.end(), warning) == warnings.end()) warnings.push_back(warning);
         }
     }
-    if (requireRecording && !calibration && containsDual && !settings->m_twoPlayerMode && mod->getSettingValue<bool>("dual-auto"))
-        throw Error("AUTO_RECORD", "Invisible dual needs a NEW full Record, even when Require recorded trajectory is disabled");
+    bool manualRequested = !settings->m_twoPlayerMode && mod->getSettingValue<bool>("manual-duals");
+    if (requireRecording && !calibration && containsDual && !settings->m_twoPlayerMode &&
+        (mod->getSettingValue<bool>("dual-auto") || manualRequested))
+        throw Error("AUTO_RECORD", "Invisible auto / manual dual sections need a complete Record, even when Require recorded trajectory is disabled");
     PlanConfig cfg;
     cfg.twoPlayer = settings->m_twoPlayerMode; cfg.strict240 = mod->getSettingValue<bool>("strict-240");
     cfg.offsetMs = mod->getSettingValue<double>("offset-ms");
     cfg.maxTriggers = static_cast<size_t>(mod->getSettingValue<int64_t>("max-triggers"));
-    cfg.sharedP1Only = mod->getSettingValue<bool>("shared-p1-only");
+    cfg.sharedP1Only = !manualRequested && mod->getSettingValue<bool>("shared-p1-only");
     auto effective = matjson::Value::object();
     effective["two_player"] = cfg.twoPlayer; effective["strict_240"] = cfg.strict240;
     effective["offset_ms"] = cfg.offsetMs; effective["unsafe_timeline"] = unsafe;
@@ -67,8 +71,10 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     effective["native_only"] = true;
     effective["shared_p1_only"] = cfg.sharedP1Only;
     out.plan = plan(replay, cfg);
-    bool autoDual = calibration && calibration->sawDual && !cfg.twoPlayer && mod->getSettingValue<bool>("dual-auto");
+    out.manualDual = calibration && calibration->sawDual && manualRequested;
+    bool autoDual = calibration && calibration->sawDual && !cfg.twoPlayer && !manualRequested && mod->getSettingValue<bool>("dual-auto");
     effective["invisible_dual_auto"] = autoDual;
+    effective["manual_duals"] = out.manualDual;
     if (autoDual) for (auto& g : out.plan.gates) g.p2 = 1;
     if (calibration) {
         if (!calibration->completed || calibration->twoPlayer != cfg.twoPlayer || calibration->macroHash != replay.fingerprint || calibration->levelHash != hash)
@@ -79,7 +85,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         // meaningful planner warnings such as a missing independent P2 stream.
         if (!out.plan.warnings.empty()) out.plan.warnings.pop_back();
         out.plan.warnings.push_back("Recorded physics-step positions loaded. Use Verify, then test with HoldForge disabled before publishing.");
-        if (calibration->sawDual && !cfg.twoPlayer && !autoDual)
+        if (calibration->sawDual && !cfg.twoPlayer && !autoDual && !out.manualDual)
             out.plan.warnings.push_back("Ordinary dual uses native control gates. P2 hold reactivation is not confirmed; Verify must check it. No runtime fixes are applied.");
     }
     effective["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
@@ -104,26 +110,44 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         // max_digits10 preserves float coordinates through serialization.
         p.object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,{},199,{};", p.x, p.y, layer, gate.p1, gate.p2);
         out.placements.push_back(p);
-        if (mod->getSettingValue<bool>("debug-mapping")) {
-            auto row = matjson::Value::object(); row["frame"] = gate.frame; row["seconds"] = gate.seconds;
-            row["x"] = p.x; row["y"] = p.y; row["roundtrip_seconds"] = back;
-            row["p1"] = gate.p1; row["p2"] = gate.p2;
-            row["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
-            if (mod->getSettingValue<bool>("debug-objects")) row["object"] = p.object;
-            debug.event("placement", row);
+    }
+    if (out.manualDual) {
+        std::vector<PositionedGate> gates;
+        for (auto const& p : out.placements) gates.push_back({p.gate, p.x});
+        auto result = manualDualGates(gates, *calibration);
+        if (result.gates.size() > cfg.maxTriggers)
+            throw Error("PLAN_LIMIT", "Manual dual boundary gates exceed Maximum generated objects");
+        out.placements.clear();
+        for (auto const& p : result.gates) {
+            auto object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,{},199,{};", p.x, y, layer, p.gate.p1, p.gate.p2);
+            out.placements.push_back({p.gate, p.x, y, std::move(object)});
         }
+        auto j = matjson::Value::object(); j["segments"] = result.segments;
+        j["skipped_gates"] = result.skipped; j["final_gates"] = result.gates.size();
+        debug.set("manual_duals", j);
+        out.plan.warnings.push_back("Manual dual mode: both controls enabled at entry, no macro gates/helpers inside, macro state restored at exit. Build dual auto objects yourself. Test edited levels with normal Play.");
     }
     if (autoDual) {
         // Detached native prototype: validate object ID/type and actual hitbox
         // before changing the editor. Never assume a Teleport trigger targets P2.
-        auto prototype = typeinfo_cast<TeleportPortalObject*>(GameObject::createWithKey(2064));
-        if (!prototype || prototype->m_objectType != GameObjectType::TeleportPortal || prototype->m_orangePortal)
-            throw Error("AUTO_PORTAL_TYPE", "GD does not recognize the expected unlinked touch portal (2064); export logs");
+        debug.checkpoint("portal_probe_begin");
+        auto object = GameObject::createWithKey(native::unlinkedPortal);
+        auto prototype = typeinfo_cast<TeleportPortalObject*>(object);
+        auto probe = matjson::Value::object(); probe["requested_id"] = native::unlinkedPortal;
+        probe["created"] = object != nullptr; probe["teleport_class"] = prototype != nullptr;
+        if (object) { probe["actual_id"] = object->m_objectID; probe["object_type"] = static_cast<int>(object->m_objectType); }
+        if (prototype) { probe["yellow_exit"] = prototype->m_isYellowPortal; probe["linked_exit"] = prototype->m_orangePortal != nullptr; }
+        debug.set("portal_probe", probe);
+        if (!prototype || prototype->m_objectID != native::unlinkedPortal ||
+            prototype->m_objectType != GameObjectType::TeleportPortal || prototype->m_isYellowPortal || prototype->m_orangePortal)
+            throw Error("AUTO_PORTAL_TYPE", "Expected BLUE entrance 2902 (2064 is the orange exit). Runtime type differs; Export logs includes portal_probe. Use Manual dual sections to continue without auto helpers");
         prototype->setRScale(.5f);
         auto rect = prototype->getObjectRect();
         AutoPathConfig ac;
         ac.layer = layer; ac.maxObjects = cfg.maxTriggers - out.placements.size();
         ac.halfWidth = rect.size.width / 2; ac.halfHeight = rect.size.height / 2;
+        probe["half_width"] = ac.halfWidth; probe["half_height"] = ac.halfHeight;
+        debug.set("portal_probe", probe); debug.checkpoint("portal_probe_complete", probe);
         if (ac.halfWidth <= 0 || ac.halfHeight <= 0 || ac.halfWidth > 100 || ac.halfHeight > 100)
             throw Error("AUTO_PORTAL_BOUNDS", "Unexpected native portal hitbox; export logs");
         out.autoPath = makeAutoPath(*calibration, out.levelBefore, ac);
@@ -156,6 +180,22 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         j["modes"] = matjson::Value::array(); for (auto n : out.autoPath.modes) j["modes"].push(n);
         debug.set("invisible_dual_auto", j);
         out.plan.warnings.push_back("Experimental invisible dual path: native touch portals, 240 corrections/sec. Preserves forms; does not reproduce P2 input/rotation/gravity. Verify and test without mods.");
+    }
+    // Report and draw the FINAL gates, including manual boundaries / auto-entry
+    // blocks. Do not log gates that manual mode removed as actual placements.
+    out.plan.gates.clear();
+    if (calibration) out.plan.duration = std::max(out.plan.duration, calibration->endTime);
+    for (auto const& p : out.placements) {
+        out.plan.gates.push_back(p.gate);
+        if (mod->getSettingValue<bool>("debug-mapping")) {
+            auto row = matjson::Value::object(); row["frame"] = p.gate.frame; row["seconds"] = p.gate.seconds;
+            row["x"] = p.x; row["y"] = p.y;
+            row["roundtrip_seconds"] = editor->timeForPos({p.x-dx, p.y}, 0, 0, false, 0);
+            row["p1"] = p.gate.p1; row["p2"] = p.gate.p2;
+            row["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
+            if (mod->getSettingValue<bool>("debug-objects")) row["object"] = p.object;
+            debug.event("placement", row);
+        }
     }
     auto report = matjson::Value::object(); report["triggers"] = out.placements.size();
     report["auto_objects"] = out.autoPath.objects.size();
@@ -206,7 +246,7 @@ size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
             if (e.group) ok = ok && obj->m_groupCount == 1 && obj->getGroupID(0) == e.group;
             if (e.kind == AutoKind::Portal) {
                 auto portal = typeinfo_cast<TeleportPortalObject*>(obj);
-                ok = ok && portal && portal->m_objectType == GameObjectType::TeleportPortal && !portal->m_orangePortal &&
+                ok = ok && portal && portal->m_objectType == GameObjectType::TeleportPortal && !portal->m_isYellowPortal && !portal->m_orangePortal &&
                     portal->m_targetGroupID == e.target && portal->m_isTouchTriggered && !portal->m_isSpawnTriggered &&
                     !portal->m_isNoTouch && portal->m_ignoreX && !portal->m_ignoreY && !portal->m_saveOffset &&
                     portal->m_staticForceEnabled && portal->m_staticForce == 0 && !portal->m_staticForceAdditive &&

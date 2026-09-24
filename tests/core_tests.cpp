@@ -2,6 +2,7 @@
 #include "core/Plan.hpp"
 #include "core/Trajectory.hpp"
 #include "core/AutoPath.hpp"
+#include "core/ManualDual.hpp"
 #include <set>
 #include <sstream>
 #include <cmath>
@@ -171,9 +172,9 @@ void autoTests() {
         for (auto const& a : plan.anchors) check(targetMembers.contains(a.targetGroup), "every teleport target resolves");
         for (auto const& o : plan.objects) {
             check(o.object.find(",135,1,") != std::string::npos, "helper serialized hidden");
-            if (o.kind == hf::AutoKind::Target) check(o.object.find(",121,1;") != std::string::npos, "target has no collision");
+            if (o.kind == hf::AutoKind::Target) check(o.id == 2064 && o.object.find(",121,1;") != std::string::npos, "orange exit target has no collision");
             if (o.kind == hf::AutoKind::Portal) {
-                check(o.id == 2064 && o.object.find(",352,1,") != std::string::npos, "native touch portal preserves X");
+                check(o.id == 2902 && o.object.starts_with("1,2902,") && o.object.find(",352,1,") != std::string::npos, "BLUE native touch portal preserves X; orange exit is not an entrance");
                 check(o.object.find(",121,1") == std::string::npos, "portal collision must remain enabled");
             }
         }
@@ -206,10 +207,44 @@ void autoTests() {
     auto multi = t; for (size_t i=25; i<30; ++i) multi.steps[i].dual = false;
     check(hf::makeAutoPath(multi, "").segments == 2, "separated dual sections planned independently");
 }
+void manualDualTests() {
+    auto t = autoTrace(0, 4);
+    std::vector<hf::PositionedGate> gates;
+    auto add = [&](size_t frame, bool down) {
+        float x = frame ? static_cast<float>(hf::crossingPosition(t.steps[frame-1].x, t.steps[frame].x)) : 0.f;
+        gates.push_back({{frame, frame/240.0, down ? -1 : 1, down ? -1 : 1}, x});
+    };
+    add(0, false); add(2, true); add(5, false); add(10, true);
+    add(20, false); add(55, true); add(58, false);
+    auto result = hf::manualDualGates(gates, t);
+    check(result.segments == 1 && result.skipped == 4 && result.gates.size() == 5, "manual dual removes interior and merges boundary gates");
+    check(result.gates[2].gate.frame == 5 && result.gates[2].gate.p1 == -1 && result.gates[2].gate.p2 == -1, "entry enables both controls despite same-frame release");
+    check(result.gates[3].gate.frame == 55 && result.gates[3].gate.p1 == -1 && result.gates[3].gate.p2 == -1, "exit restores state including same-frame press");
+    check(result.gates[4].x == gates.back().x && result.gates[4].gate.p1 == 1, "solo gates after dual preserved");
+    auto noExitPress = gates; noExitPress.erase(noExitPress.begin()+5);
+    check(hf::manualDualGates(noExitPress, t).gates[3].gate.p1 == 1, "exit restores release inside dual even without input at exit");
+    auto startDual = t; for (auto& s : startDual.steps) s.dual = true;
+    auto start = hf::manualDualGates(gates, startDual);
+    check(start.gates.size() == 1 && start.gates[0].x == 0 && start.gates[0].gate.p1 == -1, "level starting and ending in dual has one hold gate");
+    auto multi = t; for (size_t i=25; i<30; ++i) multi.steps[i].dual = false;
+    check(hf::manualDualGates(gates, multi).segments == 2, "manual dual handles multiple sections");
+    auto solo = t; for (auto& s : solo.steps) s.dual = false;
+    auto unchanged = hf::manualDualGates(gates, solo);
+    check(unchanged.segments == 0 && unchanged.gates.size() == gates.size(), "solo level keeps all gates");
+    auto two = t; two.twoPlayer = true;
+    error([&] { hf::manualDualGates(gates, two); }, "MANUAL_2P");
+    auto partial = t; partial.completed = false;
+    error([&] { hf::manualDualGates(gates, partial); }, "MANUAL_RECORD");
+    auto broken = gates; broken[2].x = broken[1].x;
+    error([&] { hf::manualDualGates(broken, t); }, "MANUAL_GATES");
+    auto badTrace = t; badTrace.steps[10].time = badTrace.steps[9].time;
+    error([&] { hf::manualDualGates(gates, badTrace); }, "MANUAL_RECORD");
+}
 int main(int argc, char** argv) {
  try {
     trajectoryTests();
     autoTests();
+    manualDualTests();
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");

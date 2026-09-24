@@ -142,13 +142,22 @@ class $modify(HFPlayTrace, PlayLayer) {
             log::warn("HoldForge could not establish the outer reset observer");
     }
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
-        hf::Workflow::get().attempt(this, false); return true;
+        auto stage = matjson::Value::object(); stage["use_replay"] = useReplay;
+        stage["dont_create_objects"] = dontCreateObjects;
+        hf::Diagnostics::get().checkpoint("play_init_begin", stage);
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
+            hf::Diagnostics::get().checkpoint("play_init_failed"); return false;
+        }
+        hf::Diagnostics::get().checkpoint("play_init_base_returned");
+        hf::Workflow::get().attempt(this, false);
+        hf::Diagnostics::get().checkpoint("play_init_complete"); return true;
     }
     void resetLevel() {
+        hf::Diagnostics::get().checkpoint("reset_begin");
         hf::Workflow::get().resetBegin(this);
         PlayLayer::resetLevel();
         hf::Workflow::get().attempt(this, false);
+        hf::Diagnostics::get().checkpoint("reset_complete");
         if (trace()) hf::Diagnostics::get().event("attempt_reset", state(this));
     }
     void destroyPlayer(PlayerObject* player, GameObject* object) {
@@ -167,14 +176,16 @@ class $modify(HFPlayTrace, PlayLayer) {
         hf::Workflow::get().complete(this);
         PlayLayer::levelComplete();
     }
-    void onQuit() { hf::Workflow::get().leave(this); PlayLayer::onQuit(); }
+    void onQuit() { hf::Diagnostics::get().checkpoint("play_quit"); hf::Workflow::get().leave(this); PlayLayer::onQuit(); }
     void onExit() { hf::Workflow::get().leave(this); PlayLayer::onExit(); }
 };
 class $modify(HFEditorTrace, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {
+        hf::Diagnostics::get().checkpoint("editor_init_begin");
         hf::Diagnostics::get().event("editor_init_begin");
         if (!LevelEditorLayer::init(level, noUI)) return false;
         hf::Diagnostics::get().event("editor_init_complete");
+        hf::Diagnostics::get().checkpoint("editor_init_complete");
         if (!noUI) {
             WeakRef<LevelEditorLayer> weak = this;
             queueInMainThread([weak] {

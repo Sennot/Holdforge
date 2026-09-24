@@ -1,4 +1,5 @@
 #include "AutoPath.hpp"
+#include "NativeObjects.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -112,11 +113,11 @@ AutoPath makeAutoPath(Trajectory const& trace, std::string_view original, AutoPa
         // Native getPortalTarget resolves its group even while toggled off.
         // This needs one group/step, plus one inert target per segment.
         a.targetGroup = nextIsTarget ? out.anchors[i+1].portalGroup : group();
-        add(AutoKind::Portal, 2064, a.x, a.y, a.portalGroup, a.targetGroup, false);
-        if (!nextIsTarget) add(AutoKind::Target, 1, a.targetX, a.targetY, a.targetGroup, 0, false);
-        add(AutoKind::Toggle, 1049, 0, -90, 0, a.portalGroup, false);
-        add(AutoKind::Toggle, 1049, static_cast<float>(a.onX), -60, 0, a.portalGroup, true);
-        add(AutoKind::Toggle, 1049, static_cast<float>(a.offX), -30, 0, a.portalGroup, false);
+        add(AutoKind::Portal, native::unlinkedPortal, a.x, a.y, a.portalGroup, a.targetGroup, false);
+        if (!nextIsTarget) add(AutoKind::Target, native::unlinkedExit, a.targetX, a.targetY, a.targetGroup, 0, false);
+        add(AutoKind::Toggle, native::toggle, 0, -90, 0, a.portalGroup, false);
+        add(AutoKind::Toggle, native::toggle, static_cast<float>(a.onX), -60, 0, a.portalGroup, true);
+        add(AutoKind::Toggle, native::toggle, static_cast<float>(a.offX), -30, 0, a.portalGroup, false);
     }
     return out;
 }

@@ -53,7 +53,7 @@ void Workflow::select(LevelEditorLayer* editor, Replay replay, std::string name)
     plan(replay, config);
     m_replay = std::move(replay); m_name = std::move(name); m_target = editor->m_level;
     m_twoPlayer = editor->m_levelSettings->m_twoPlayerMode;
-    m_source = std::string(editor->getLevelString()); m_holdSource.clear(); m_gates.clear(); m_auto = false; m_anchors.clear(); m_autoTargets.clear(); m_autoSeen.clear();
+    m_source = std::string(editor->getLevelString()); m_holdSource.clear(); m_gates.clear(); m_auto = false; m_manualDual = false; m_anchors.clear(); m_autoTargets.clear(); m_autoSeen.clear();
     m_mode = Mode::None; m_armed = false; m_layer = nullptr; m_recorder.reset(); m_trajectory.reset();
     m_status = "Macro loaded - Record a full replay";
     auto path = cachePath();
@@ -77,13 +77,16 @@ void Workflow::armRecord(LevelEditorLayer* editor) {
     Diagnostics::get().set("capture_status", "armed");
 }
 void Workflow::generated(LevelEditorLayer* editor, Prepared const& prepared) {
+    m_manualDual = prepared.manualDual;
     m_target = editor->m_level; m_holdSource = std::string(editor->getLevelString()); m_gates = prepared.placements; m_auto = !prepared.autoPath.anchors.empty();
     m_anchors = prepared.autoPath.anchors; m_autoTargets.clear();
     for (size_t i=0; i<m_anchors.size(); ++i) m_autoTargets.emplace(m_anchors[i].targetGroup, i);
-    m_status = "Generated - Verify with macro playback OFF";
+    m_status = m_manualDual ? "Generated - edit duals, then normal Play with macro OFF" : "Generated - Verify with macro playback OFF";
     Diagnostics::get().set("native_verification", "not_tested");
 }
 void Workflow::armVerify(LevelEditorLayer* editor) {
+    if (m_manualDual)
+        throw Error("VERIFY_MANUAL_DUAL", "Manual dual sections need your auto objects. After editing, use normal Play with macro OFF and hold input; exact recorded-path Verify is unavailable for this batch");
     if (!m_trajectory || m_gates.empty() || !editor || std::string(editor->getLevelString()) != m_holdSource)
         throw Error("VERIFY_LEVEL", "Create from the recorded trajectory first; generated level must be unchanged");
     m_target = editor->m_level; m_layer = nullptr; m_mode = Mode::Verify; m_armed = true;

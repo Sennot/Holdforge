@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.2.1-beta.1",
+  "version": "v0.2.2-beta.1",
   "developer": "HoldForge",
-  "description": "Silicate to native hold with recorded invisible dual path helpers. Experimental beta.",
+  "description": "Silicate to native hold: recorded gates, corrected invisible dual portals and manual dual editing.",
   "tags": [
     "editor",
     "utility"
@@ -73,6 +73,12 @@
       "default": true,
       "description": "Save the raw editor level string before inserting a batch. Import stops if backup cannot be written."
     },
+    "manual-duals": {
+      "type": "bool",
+      "name": "Manual dual sections",
+      "default": false,
+      "description": "Ordinary dual only: enable both controls at entry, skip macro Options inside, restore macro state at exit. Build your invisible blocks/pads manually. Requires a full recording; overrides Invisible dual auto and Shared P1 only. Verify is unavailable for this batch; use normal Play after editing."
+    },
     "experimental": {
       "type": "title",
       "name": "Experimental"
@@ -109,7 +115,7 @@
       "type": "bool",
       "name": "Enable diagnostic journal",
       "default": true,
-      "description": "Write a bounded latest.jsonl, flushing each event for crash diagnosis. Export logs creates a single JSON report."
+      "description": "Write bounded event logs plus last-stage.json for crash diagnosis. Previous startup checkpoint survives restart and is included in Export logs."
     },
     "debug-inputs": {
       "type": "bool",

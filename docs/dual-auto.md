@@ -1,4 +1,4 @@
-# Native dual path implementation notes (0.2.1-beta.1)
+# Native dual path implementation notes (0.2.2-beta.1)
 
 This version implements an experimental generator, not a proof that ordinary
 dual is solved. No GD process or Windows toolchain was available during development.
@@ -6,13 +6,13 @@ dual is solved. No GD process or Windows toolchain was available during developm
 - Continuous HFTRACE3 capture observes processQueuedButtons pre/post phases at
   240 TPS. Cache validation checks identity, complete tail, sample continuity,
   finite values, forms, sizes and consistency with input-edge snapshots.
-- The generator uses native object 2064 (unlinked contact teleportal), checked
+- The generator uses native object 2902 (unlinked BLUE contact teleportal), checked
   against TeleportPortalObject/GameObjectType::TeleportPortal in the running
   GD build before editor mutation. It does not use Teleport Trigger 3022 or
   assume that property 200 targets the second icon for arbitrary objects.
 - Portal scale .5; Hide 135; No Effects 116; No Particles 507; Ignore X 352;
   Static Force enabled 345, value 346 = 0; gravity mode 354 = 0. Final inert
-  markers are object 1 with NoTouch 121. Working portals keep collisions enabled.
+  markers are unlinked ORANGE exits 2064 with NoTouch 121. Working portals keep collisions enabled.
 - Native target resolution is grounded in pinned Geode bindings
   `bindings/2.2081/inline/GJBaseGameLayer.cpp`: getPortalTarget looks up a group;
   getPortalTargetPos returns target position for IDs other than legacy 747.
@@ -40,3 +40,19 @@ validate planning and serialization. They cannot resolve these engine risks.
 Record and Verify must be run from the full original and generated levels
 respectively. Save and Exit followed by normal Play is supported without
 restarting GD. Old input-only caches are deliberately not reused.
+
+## ID correction, 2026-09-24
+
+The initial implementation confused entrance and exit. The primary object-name
+registry [Tinker resources/objects.csv](https://github.com/Alphalaneous/Tinker/blob/main/resources/objects.csv)
+identifies 2902 = Unlinked Blue Teleport Portal, 2064 = Unlinked Orange Teleport
+Portal, 2065 = Custom Particles. The registry was fetched and inspected directly.
+`NativeObjects.hpp` is the shared source for generation and editor checks.
+The running game still validates RTTI, object type, absence of linked exit and
+`m_isYellowPortal == false` before generation. No type override is applied.
+
+Manual dual mode uses recorded boundaries to suppress interior macro gates,
+enables both controls at entry and restores accumulated macro state at exit.
+An input exactly at entry is consumed under manual hold; an input exactly at
+exit contributes to the restored state. It creates no auto helpers. Precise
+trajectory Verify is explicitly unavailable for manual batches; use normal Play.

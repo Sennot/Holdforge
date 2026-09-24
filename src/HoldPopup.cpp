@@ -120,7 +120,7 @@ void HoldPopup::onAnalyze(CCObject*) {
         auto const& p = m_prepared->plan;
         auto stats = fmt::format("SLC{}  /  {} TPS  /  {} objects  /  {:.2f}s", m_replay->format, m_replay->tps, m_prepared->placements.size() + m_prepared->autoPath.objects.size(), p.duration);
         m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(380, .31f, .17f);
-        status(Workflow::get().trajectory() ? "Recorded positions ready - Create, then Verify" :
+        status(m_prepared->manualDual ? "Ready - Create, then build your dual auto objects" : Workflow::get().trajectory() ? "Recorded positions ready - Create, then Verify" :
             fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
         m_create->setEnabled(true); m_create->setOpacity(255); drawTimeline();
     } catch (std::exception const& e) { failure(e); }
@@ -136,7 +136,10 @@ void HoldPopup::onCreate(CCObject*) {
         status(fmt::format("Created {} objects - one Undo restores the batch", count));
         std::string notes;
         for (auto const& w : m_prepared->plan.warnings) notes += "\n" + w;
-        FLAlertLayer::create("HoldForge", fmt::format("<cg>{} native objects created.</c>\nPress Verify, turn macro playback OFF, Save and Exit, then normal Play holding input. Test with HoldForge disabled before publishing.{}", count, notes), "OK")->show();
+        auto next = m_prepared->manualDual
+            ? "Build your invisible blocks/pads in dual sections. Test using normal Play with macro OFF, holding input."
+            : "Press Verify, turn macro playback OFF, Save and Exit, then normal Play holding input.";
+        FLAlertLayer::create("HoldForge", fmt::format("<cg>{} native objects created.</c>\n{} Test with HoldForge disabled before publishing.{}", count, next, notes), "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onRecord(CCObject*) {
@@ -167,6 +170,7 @@ void HoldPopup::onHelp(CCObject*) {
         "Record saves every physics step; Create writes native level objects.\n"
         "Verify compares native hold to the recording. No runtime fixes.\n"
         "Invisible dual auto uses hidden portals along the recorded P2 path. Beta: test without HoldForge.\n"
+        "Manual dual sections leaves dual construction to you; test your edits with normal Play.\n"
         "Settings: timing offset, editor layer, debug traces.\n"
         "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
     if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;
