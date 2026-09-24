@@ -1,6 +1,6 @@
 #include "core/Slc.hpp"
 #include "core/Plan.hpp"
-#include "core/Calibration.hpp"
+#include "core/Trajectory.hpp"
 #include <sstream>
 #include <cmath>
 #include <cstring>
@@ -42,35 +42,111 @@ Bytes v2(int metaSize = 64) {
     put(b, (120 << 5) | (7 << 2), 2); real(b, 480);
     put(b, (240 << 5) | 4, 2); text(b, "EOM"); return b;
 }
+// Observe synthetic physics steps, including both known clock origins. This
+// tests recording identity/phase checks without pretending to simulate GD.
+hf::Trajectory capture(hf::Replay const& replay, bool twoPlayer = false, double origin = 0) {
+    hf::Recorder recorder(replay, 0x1234, twoPlayer);
+    auto inputs = hf::traceActions(replay, twoPlayer);
+    size_t next = 0; bool held1 = false, held2 = false;
+    for (uint64_t f = 0; f <= inputs.back().frame; ++f) {
+        hf::Sample s; s.time = origin + f / 240.0;
+        s.x = 10 + 1.25 * f; s.y = 105;
+        s.dual = f >= 2; s.p2x = s.x; s.p2y = 200;
+        s.held1 = held1; s.held2 = held2;
+        recorder.step(s);
+        while (next < inputs.size() && inputs[next].frame == f) {
+            auto const& a = inputs[next++];
+            check(recorder.input(a.down, a.p2, s), "capture accepts matching edge");
+            if (a.p2) held2 = a.down; else held1 = a.down;
+        }
+        s.held1 = held1; s.held2 = held2; recorder.stepEnd(s);
+    }
+    return recorder.finish(origin + inputs.back().frame / 240.0 + 1);
+}
+void trajectoryTests() {
+    hf::Replay r; r.fingerprint = 91;
+    r.actions = {{2, hf::Kind::Jump, true, false}, {4, hf::Kind::Jump, false, false}};
+    for (double origin : {0.0, 1.0 / 240.0}) {
+        auto t = capture(r, false, origin);
+        check(t.completed && t.sawDual && t.inputs.size() == 2, "completed dual recording");
+        check(std::abs(t.clockOffset - origin) < 1e-9, "observed clock origin");
+        check(t.position(2) > 11.25 && t.position(2) < 12.5, "trigger inside observed crossing");
+        check(t.inputs[0].after.held1 && !t.inputs[1].after.held1, "post-input state retained");
+        std::ostringstream output; hf::writeTrajectory(output, t);
+        auto load = [&](std::string text, hf::Replay replay = hf::Replay{}) {
+            if (replay.actions.empty()) replay = r;
+            std::istringstream in(text); return hf::readTrajectory(in, replay, 0x1234, false);
+        };
+        auto loaded = load(output.str());
+        check(loaded.position(4) == t.position(4), "trace roundtrip");
+        error([&] { t.position(3); }, "CAPTURE_FRAME");
+        error([&] { load(output.str() + "unexpected"); }, "CAPTURE_CACHE");
+        error([&] { load(output.str().substr(0, output.str().size() / 2)); }, "CAPTURE_CACHE");
+        auto other = r; ++other.fingerprint;
+        error([&] { load(output.str(), other); }, "CAPTURE_IDENTITY");
+        error([&] { std::istringstream in(output.str()); hf::readTrajectory(in, r, 0x4321, false); }, "CAPTURE_IDENTITY");
+        t.completed = false; std::ostringstream partial; hf::writeTrajectory(partial, t);
+        error([&] { load(partial.str()); }, "CAPTURE_CACHE");
+        t.completed = true; t.inputs[1].triggerX += 1;
+        std::ostringstream damaged; hf::writeTrajectory(damaged, t);
+        error([&] { load(damaged.str()); }, "CAPTURE_CACHE");
+    }
+    auto zero = r; zero.actions[0].frame = 0;
+    auto t0 = capture(zero); check(t0.position(0) == 0, "frame-zero initial gate");
+    auto two = r;
+    two.actions = {{2, hf::Kind::Jump, true, false}, {2, hf::Kind::Jump, true, true},
+                   {4, hf::Kind::Jump, false, true}, {5, hf::Kind::Jump, false, false}};
+    auto both = capture(two, true);
+    check(both.inputs[0].triggerX == both.inputs[1].triggerX, "simultaneous 2P position");
+    check(both.inputs[0].after.held1 && both.inputs[0].after.held2, "2P post-queue snapshot");
+    std::ostringstream out; hf::writeTrajectory(out, both);
+    std::istringstream in(out.str());
+    check(hf::readTrajectory(in, two, 0x1234, true).inputs.size() == 4, "2P trace roundtrip");
+    hf::PlanConfig config; config.sharedP1Only = true;
+    auto alternative = hf::plan(r, config);
+    for (auto const& g : alternative.gates) check(g.p2 == 0, "P1-only diagnostic leaves P2 untouched");
+    config.twoPlayer = true;
+    check(hf::plan(two, config).gates[1].p2 == -1, "P1-only does not affect 2P");
+    auto duplicate = r; duplicate.actions.insert(duplicate.actions.begin()+1, duplicate.actions.front());
+    check(hf::traceActions(duplicate, false).size() == 2, "recording canonical duplicate removal");
+    error([&] { hf::crossingPosition(1, 1); }, "CAPTURE_X");
+    error([&] { hf::crossingPosition(2, 1); }, "CAPTURE_X");
+    error([&] { hf::crossingPosition(1.001, 1.002); }, "CAPTURE_PRECISION");
+    hf::Sample s; s.x = 10; s.y = 105;
+    hf::Recorder phase(r, 0x1234, false);
+    error([&] { phase.input(true, false, s); }, "CAPTURE_PHASE");
+    phase.step(s); s.time = 1.0 / 240; s.x += 1; phase.step(s);
+    s.time = 2.0 / 240; s.x += 1; phase.step(s);
+    check(phase.input(true, false, s), "correct first edge");
+    check(!phase.input(true, false, s), "repeated down ignored");
+    error([&] { phase.input(false, false, s); }, "CAPTURE_INPUT");
+    error([&] { phase.finish(1); }, "CAPTURE_INCOMPLETE");
+    hf::Recorder missed(r, 1, false); s = {}; s.x = 10; missed.step(s);
+    for (int f=1; f<=3; ++f) { s.time=f/240.0; s.x++; missed.step(s); }
+    s.time=4/240.0; s.x++;
+    error([&] { missed.step(s); }, "CAPTURE_MISSING_INPUT");
+    hf::Recorder start(r, 1, false); s = {}; s.time = 1;
+    error([&] { start.step(s); }, "CAPTURE_START");
+    hf::Recorder gap(r, 1, false); s = {}; s.x = 10; gap.step(s); s.time = 2/240.0;
+    error([&] { gap.step(s); }, "CAPTURE_STEP");
+    hf::Recorder reverse(r, 1, false); s = {}; s.x = 10; reverse.step(s); s.time = 1/240.0; s.x = 9;
+    error([&] { reverse.step(s); }, "CAPTURE_REVERSE");
+    hf::Recorder clock(r, 1, false); s = {}; s.x = 10; clock.step(s); s.time=1/240.0; s.x++; clock.step(s); s.time=0;
+    error([&] { clock.step(s); }, "CAPTURE_RESET");
+    auto one = zero; one.actions.resize(1);
+    hf::Recorder noAfter(one, 1, false); s = {}; s.x = 10; noAfter.step(s); noAfter.input(true, false, s);
+    error([&] { noAfter.finish(1); }, "CAPTURE_PHASE");
+}
 int main(int argc, char** argv) {
  try {
+    trajectoryTests();
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");
     check(r.actions.size() == 2 && r.actions[0].frame == 240 && r.actions[1].frame == 360, "delta frames");
-    std::ostringstream header;
-    header << "HFTRACE3 " << std::hex << r.fingerprint << " 1234 " << std::dec << "0 1 2 input-edge-snapshot\n";
-    auto readTrace = [&](std::string const& rows) {
-        std::istringstream stream(header.str() + rows); return hf::readCalibration(stream, r);
-    };
-    auto calibrated = readTrace(
-        "240 1 0 1 1.0 100.5 5 100.5 0\n"
-        "360 0 0 2 1.5 200.5 5 200.5 0\n");
-    check(calibrated.position(240, -1, -1) == 100.5 && calibrated.position(360, 1, 1) == 200.5, "recorded input-edge positions");
-    check(calibrated.levelHash == 0x1234, "recorded level binding");
-    error([&] { readTrace("240 0 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 200.5 5 200.5 0\n"); }, "TRACE_INPUT");
-    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 90 5 90 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.2 200.5 5 200.5 0\n"); }, "TRACE_TIMING");
-    error([&] { readTrace("240 1 0 2 1.0 100.5 5 100.5 0\n360 0 0 3 1.5 200.5 5 200.5 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.4 0\n360 0 0 2 1.5 200.5 5 200.5 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n"); }, "TRACE_ROW");
-    error([&] { readTrace("240 1 0 1 1.0 100.5 5 100.5 0\n360 0 0 2 1.5 200.5 5 200.5 0\nextra"); }, "TRACE_TRAILING");
-    error([&] { calibrated.position(100, -1, 0); }, "TRACE_FRAME");
-    error([&] { std::istringstream stream("HFTRACE3 0 1234 0 1 2 input-edge-snapshot"); hf::readCalibration(stream, r); }, "TRACE_MACRO");
-    error([&] { std::istringstream stream("HFTRACE2 0 1234 0 1 2 previous-step-midpoint"); hf::readCalibration(stream, r); }, "TRACE_HEADER");
     auto p = hf::plan(r, {});
-    check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial shared native control gate");
-    check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "ordinary dual mirrors shared native gate");
+    check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates[0].p2 == 1, "initial control gate");
+    check(p.gates[1].seconds == 1 && p.gates[1].p1 == -1 && p.gates[1].p2 == -1, "shared dual press");
     check(p.gates[2].seconds == 1.5 && p.gates[2].p1 == 1, "release blocks");
     check(hf::parse(v3(s, 2, true, true)).actions.size() == 2, "zero size and unknown atom");
     for (int width : {1, 2, 4, 8}) {
@@ -144,19 +220,11 @@ int main(int argc, char** argv) {
         try { auto parsed = hf::parse(mutant); check(parsed.actions.size() <= hf::MaxActions, "bounded mutation output"); }
         catch (hf::Error const&) {}
     }
-    if (argc == 3) {
+    if (argc == 2) {
         auto actual = hf::read(argv[1]);
-        auto reference = hf::readCalibration(std::filesystem::path(argv[2]), actual);
-        hf::PlanConfig actualCfg; actualCfg.twoPlayer = reference.twoPlayer;
-        auto actualPlan = hf::plan(actual, actualCfg);
-        double previousX = 0;
-        for (auto const& g : actualPlan.gates) {
-            if (!g.frame) continue;
-            auto x = reference.position(g.frame, g.p1, g.p2);
-            check(std::isfinite(x) && x > previousX, "actual macro has increasing calibrated gates");
-            previousX = x;
-        }
-        std::cout << "PASS: supplied .slc matched " << reference.inputs.size() << " recorded inputs\n";
+        auto actualPlan = hf::plan(actual, {});
+        check(hf::traceActions(actual, false).size() + 1 == actualPlan.gates.size(), "supplied macro canonical coverage");
+        std::cout << "PASS: supplied .slc parsed/planned, " << actual.actions.size() << " inputs (no in-game claim)\n";
     }
     std::cout << "PASS: " << checks << " checks; 2000 deterministic malformed-input mutations\n";
     return 0;

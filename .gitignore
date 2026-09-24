@@ -6,3 +6,4 @@
 
 # Personal recorded positions are distributed locally, not committed.
 /calibration/*.hftrace
+*.hftrace2

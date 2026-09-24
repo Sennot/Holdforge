@@ -1,5 +1,4 @@
 #include "Editor.hpp"
-#include "core/Fingerprint.hpp"
 #include "Diagnostics.hpp"
 #include <fstream>
 #include <cmath>
@@ -7,37 +6,35 @@
 #include <unordered_map>
 using namespace geode::prelude;
 namespace hf {
-Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration const* calibration) {
+Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory const* calibration, bool requireRecording) {
     if (!editor || LevelEditorLayer::get() != editor) throw Error("EDITOR_CLOSED", "Editor session changed");
     if (editor->m_playbackMode != PlaybackMode::Not || editor->m_playbackActive)
         throw Error("EDITOR_PLAYING", "Stop playtest and music playback first");
     auto settings = editor->m_levelSettings;
     if (!settings || settings->m_platformerMode) throw Error("LEVEL_PLATFORMER", "This converter supports classic levels only");
     auto mod = Mod::get(); auto& debug = Diagnostics::get();
+    if (requireRecording && !calibration && mod->getSettingValue<bool>("require-recording"))
+        throw Error("RECORD_FIRST", "Record a complete replay with the Record button before generating");
     Prepared out;
     out.levelBefore = std::string(editor->getLevelString());
     auto info = matjson::Value::object();
     info["two_player"] = settings->m_twoPlayerMode; info["start_dual"] = settings->m_startDual;
     info["start_speed"] = static_cast<int>(settings->m_startSpeed);
     info["objects"] = editor->m_objects->count();
-    uint64_t hash = fingerprint(out.levelBefore);
+    uint64_t hash = 14695981039346656037ULL;
+    for (auto c : out.levelBefore) { hash ^= static_cast<uint8_t>(c); hash *= 1099511628211ULL; }
     info["fingerprint_fnv1a64"] = fmt::format("{:016x}", hash);
     info["serialized_bytes"] = out.levelBefore.size(); debug.set("level", info);
-    // Discontinuous X cannot yet be represented safely by the recorded crossing interval.
-    std::unordered_map<int, std::string> hardRisks{
-        {1917, "Reverse"}, {3022, "Teleport trigger"}, {747, "Teleport portal"},
-        {749, "Teleport exit"}, {2900, "Gameplay rotation"}
-    };
-    // These are allowed with an automatic trace because placement follows measured movement,
-    // but remain unsafe for the legacy editor-time fallback.
-    std::unordered_map<int, std::string> timelineRisks{
-        {1935, "TimeWarp"}, {1704, "Dash orb"}, {1751, "Gravity dash orb"},
+    // Conservative gate: these mechanics can make an editor timeline differ from actual movement.
+    std::unordered_map<int, std::string> risks{
+        {1917, "Reverse"}, {1935, "TimeWarp"}, {3022, "Teleport trigger"},
+        {747, "Teleport portal"}, {749, "Teleport exit"}, {1704, "Dash orb"},
+        {1751, "Gravity dash orb"}, {2900, "Gameplay rotation"},
         {2901, "Gameplay offset"}, {1932, "Player Control"}
     };
     bool unsafe = mod->getSettingValue<bool>("unsafe-timeline");
-    bool staticFallback = mod->getSettingValue<bool>("allow-static-fallback");
     std::vector<std::string> warnings;
-    if (settings->m_rotateGameplay) throw Error("LEVEL_ROTATE", "Rotated gameplay is not yet supported by automatic trace placement");
+    if (settings->m_rotateGameplay && !unsafe) throw Error("LEVEL_ROTATE", "Rotated gameplay needs a recorded trajectory; timeline conversion is disabled");
     for (auto obj : CCArrayExt<GameObject*>(editor->m_objects)) {
         if (auto options = typeinfo_cast<GameOptionsTrigger*>(obj)) {
             if ((options->m_disableP1Controls != GameOptionsSetting::Disabled ||
@@ -45,49 +42,38 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration con
                  !mod->getSettingValue<bool>("allow-existing-controls"))
                 throw Error("LEVEL_CONTROL_CONFLICT", "Existing control Options Triggers found. Undo the previous import or resolve the conflict first.");
         }
-        if (auto it = hardRisks.find(obj->m_objectID); it != hardRisks.end())
-            throw Error("LEVEL_X_DISCONTINUITY", it->second + " is not yet supported by automatic trace placement");
-        if (auto it = timelineRisks.find(obj->m_objectID); it != timelineRisks.end()) {
-            if (!calibration && !unsafe)
-                throw Error("LEVEL_TIMELINE_RISK", it->second + " needs an automatic trace (or the unsafe experimental fallback)");
-            if (!calibration) {
-                auto warning = it->second + " present: experimental editor timeline requires manual validation.";
-                if (std::find(warnings.begin(), warnings.end(), warning) == warnings.end()) warnings.push_back(warning);
-            }
+        auto it = risks.find(obj->m_objectID);
+        if (it != risks.end()) {
+            if (!unsafe) throw Error("LEVEL_TIMELINE_RISK", it->second + " found. Static timeline may be inaccurate; see Experimental timeline setting.");
+            auto warning = it->second + " present: generated timing requires manual validation.";
+            if (std::find(warnings.begin(), warnings.end(), warning) == warnings.end()) warnings.push_back(warning);
         }
     }
     PlanConfig cfg;
     cfg.twoPlayer = settings->m_twoPlayerMode; cfg.strict240 = mod->getSettingValue<bool>("strict-240");
     cfg.offsetMs = mod->getSettingValue<double>("offset-ms");
     cfg.maxTriggers = static_cast<size_t>(mod->getSettingValue<int64_t>("max-triggers"));
+    cfg.sharedP1Only = mod->getSettingValue<bool>("shared-p1-only");
     auto effective = matjson::Value::object();
     effective["two_player"] = cfg.twoPlayer; effective["strict_240"] = cfg.strict240;
     effective["offset_ms"] = cfg.offsetMs; effective["unsafe_timeline"] = unsafe;
     effective["x_offset"] = mod->getSettingValue<double>("x-offset");
-    effective["allow_static_fallback"] = staticFallback;
+    effective["native_only"] = true;
+    effective["shared_p1_only"] = cfg.sharedP1Only;
     out.plan = plan(replay, cfg);
-    {
-        auto gates = matjson::Value::array();
-        for (auto const& gate : out.plan.gates) {
-            auto row = matjson::Value::object(); row["frame"] = gate.frame; row["seconds"] = gate.seconds;
-            row["p1"] = gate.p1; row["p2"] = gate.p2; gates.push(std::move(row));
-        }
-        debug.set("macro_gates", std::move(gates));
-    }
     if (calibration) {
-        if (calibration->levelHash != hash)
-            throw Error("TRACE_LEVEL", "Recorded trace belongs to a different/modified level. Undo generated controls and record again.");
-        if (calibration->twoPlayer != cfg.twoPlayer)
-            throw Error("TRACE_MODE", "Recorded trace was made with a different 2 Player Mode setting");
+        if (!calibration->completed || calibration->twoPlayer != cfg.twoPlayer || calibration->macroHash != replay.fingerprint || calibration->levelHash != hash)
+            throw Error("TRACE_LEVEL", "Recorded positions need the unmodified original level. Remove the old hold triggers first. The level must match the recorded run.");
         if (cfg.offsetMs != 0 || mod->getSettingValue<double>("x-offset") != 0)
-            throw Error("TRACE_OFFSET", "Automatic trace requires Timing offset and Position offset = 0");
-        out.plan.warnings.push_back("Automatic trace loaded. Final acceptance still requires a stock-GD hold test with HoldForge disabled.");
-    } else if (!staticFallback) {
-        throw Error("TRACE_REQUIRED", "No valid automatic .hftrace for this macro/level. Use Record trace, replay the full macro, then import again.");
-    } else {
-        out.plan.warnings.push_back("EXPERIMENTAL: editor timeline fallback is not publication-safe; verify in stock GD.");
+            throw Error("TRACE_OFFSET", "Set Timing offset and Position offset to zero for recorded positions");
+        // Only the last generic editor-map warning is replaced. Preserve
+        // meaningful planner warnings such as a missing independent P2 stream.
+        if (!out.plan.warnings.empty()) out.plan.warnings.pop_back();
+        out.plan.warnings.push_back("Recorded physics-step positions loaded. Use Verify, then test with HoldForge disabled before publishing.");
+        if (calibration->sawDual && !cfg.twoPlayer)
+            out.plan.warnings.push_back("Ordinary dual uses native control gates. P2 hold reactivation is not confirmed; Verify must check it. No runtime fixes are applied.");
     }
-    effective["mapping_source"] = calibration ? "automatic_trace" : "editor_timeline_experimental";
+    effective["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
     debug.set("effective_conversion", effective);
     out.plan.warnings.insert(out.plan.warnings.end(), warnings.begin(), warnings.end());
     float y = static_cast<float>(mod->getSettingValue<double>("trigger-y"));
@@ -97,7 +83,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration con
     // Use GD's portal-aware time map. Never estimate x with frame * a fixed speed.
     editor->dirtifyTriggers();
     for (auto const& gate : out.plan.gates) {
-        auto point = calibration ? CCPoint{gate.frame ? static_cast<float>(calibration->position(gate.frame, gate.p1, gate.p2)) : 0.f, y}
+        auto point = calibration ? CCPoint{gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}
                                  : editor->posForTime(static_cast<float>(gate.seconds));
         if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x <= previous)
             throw Error("MAP_NON_MONOTONIC", "Timeline has overlapping/reversed X positions; use a trajectory-based conversion");
@@ -113,7 +99,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Calibration con
             auto row = matjson::Value::object(); row["frame"] = gate.frame; row["seconds"] = gate.seconds;
             row["x"] = p.x; row["y"] = p.y; row["roundtrip_seconds"] = back;
             row["p1"] = gate.p1; row["p2"] = gate.p2;
-            row["mapping_source"] = calibration ? "automatic_trace" : "editor_timeline_experimental";
+            row["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
             if (mod->getSettingValue<bool>("debug-objects")) row["object"] = p.object;
             debug.event("placement", row);
         }

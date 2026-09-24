@@ -1,62 +1,67 @@
 #include "HoldPopup.hpp"
 #include "Diagnostics.hpp"
-#include "TraceRecorder.hpp"
+#include "Workflow.hpp"
 #include <Geode/ui/GeodeUI.hpp>
 using namespace geode::prelude;
 namespace hf {
 namespace {
 CCLabelBMFont* label(CCNode* parent, std::string const& text, float x, float y,
-                     float scale, ccColor3B color = {220, 230, 245}, float width = 440) {
+                     float scale, ccColor3B color = {220, 230, 245}, float width = 390) {
     auto l = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
     l->setPosition({x, y}); l->setColor(color); l->limitLabelWidth(width, scale, 0.15f);
     parent->addChild(l); return l;
 }
 CCMenuItemSpriteExtra* button(CCMenu* menu, CCObject* target, SEL_MenuHandler cb,
                              char const* text, float x, float y, float width, ccColor3B color) {
-    auto bg = NineSlice::create("GJ_square02.png"); bg->setContentSize({width, 30}); bg->setColor(color);
-    label(bg, text, width / 2, 15, .34f, {255, 255, 255}, width - 12);
+    auto bg = NineSlice::create("GJ_square02.png"); bg->setContentSize({width, 30});
+    bg->setColor(color);
+    label(bg, text, width / 2, 15, .36f, {255, 255, 255}, width - 12);
     auto item = CCMenuItemSpriteExtra::create(bg, target, cb); item->setPosition({x, y});
     menu->addChild(item); return item;
 }
 }
-
 HoldPopup* HoldPopup::create(LevelEditorLayer* editor) {
     auto ret = new HoldPopup;
     if (ret->init(editor)) { ret->autorelease(); return ret; }
     delete ret; return nullptr;
 }
-
 bool HoldPopup::init(LevelEditorLayer* editor) {
-    if (!Popup::init(500, 310, "GJ_square02.png")) return false;
-    m_editor = editor; m_bgSprite->setColor({21, 29, 48});
-    setTitle("HOLDFORGE", "bigFont.fnt", .65f, 21.f); m_title->setColor({106, 231, 221});
-    label(m_mainLayer, "SILICATE  >  NATIVE OPTIONS TRIGGERS", 250, 264, .29f, {148, 164, 194});
-    auto card = NineSlice::create("GJ_square02.png"); card->setContentSize({464, 142});
-    card->setColor({34, 45, 67}); card->setPosition({250, 181}); m_mainLayer->addChild(card);
-    m_file = label(m_mainLayer, "Choose a .slc macro", 250, 233, .43f);
-    m_stats = label(m_mainLayer, "Classic / dual / two-player", 250, 207, .31f, {148, 164, 194});
-    label(m_mainLayer, "P1", 42, 174, .28f, {94, 230, 207}, 25);
-    label(m_mainLayer, "P2", 42, 149, .28f, {175, 151, 255}, 25);
+    if (!Popup::init(440, 330, "GJ_square02.png")) return false;
+    m_editor = editor;
+    m_bgSprite->setColor({21, 29, 48});
+    setTitle("HOLDFORGE", "bigFont.fnt", .65f, 21.f);
+    m_title->setColor({106, 231, 221});
+    label(m_mainLayer, "RECORD  >  NATIVE OPTIONS  >  VERIFY", 220, 284, .27f, {148, 164, 194});
+    auto card = NineSlice::create("GJ_square02.png"); card->setContentSize({404, 138});
+    card->setColor({34, 45, 67}); card->setPosition({220, 201}); m_mainLayer->addChild(card);
+    m_file = label(m_mainLayer, "Choose a .slc macro", 220, 251, .43f);
+    m_stats = label(m_mainLayer, "Classic / dual / two-player", 220, 226, .31f, {148, 164, 194});
+    label(m_mainLayer, "P1", 42, 194, .28f, {94, 230, 207}, 25);
+    label(m_mainLayer, "P2", 42, 170, .28f, {175, 151, 255}, 25);
     m_timeline = CCDrawNode::create(); m_mainLayer->addChild(m_timeline);
-    m_status = label(m_mainLayer, "Import  >  Record trace  >  Create", 250, 119, .29f);
-
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onImport), "Import .slc", 67, 78, 106, {49, 79, 103});
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onAnalyze), "Analyze", 189, 78, 106, {49, 79, 103});
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onRecord), "Record trace", 311, 78, 106, {63, 74, 130});
-    m_create = button(m_buttonMenu, this, menu_selector(HoldPopup::onCreate), "Create", 433, 78, 106, {29, 135, 123});
+    m_status = label(m_mainLayer, "Import - Record - Analyze - Create - Verify", 220, 145, .26f);
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onImport), "Import .slc", 85, 110, 124, {49, 79, 103});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onRecord), "Record", 220, 110, 124, {49, 79, 103});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onAnalyze), "Analyze", 355, 110, 124, {49, 79, 103});
+    m_create = button(m_buttonMenu, this, menu_selector(HoldPopup::onCreate), "Create", 85, 70, 124, {29, 135, 123});
     m_create->setEnabled(false); m_create->setOpacity(110);
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onSettings), "Settings", 110, 35, 120, {40, 50, 74});
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onExport), "Export logs", 250, 35, 120, {40, 50, 74});
-    button(m_buttonMenu, this, menu_selector(HoldPopup::onHelp), "Help", 390, 35, 120, {40, 50, 74});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onVerify), "Verify", 220, 70, 124, {29, 135, 123});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onExport), "Export logs", 355, 70, 124, {40, 50, 74});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onSettings), "Settings", 85, 31, 124, {40, 50, 74});
+    button(m_buttonMenu, this, menu_selector(HoldPopup::onHelp), "Help", 355, 31, 124, {40, 50, 74});
+    auto& workflow = Workflow::get();
+    if (auto replay = workflow.replay()) {
+        m_replay = *replay; m_file->setString(workflow.name().c_str());
+        m_file->limitLabelWidth(380, .43f, .15f);
+        m_stats->setString(workflow.trajectory() ? "Recorded trajectory available" : "Recording required");
+        status(workflow.status());
+    }
     drawTimeline(); return true;
 }
-
 void HoldPopup::status(std::string const& text, bool error) {
-    m_status->setString(text.c_str());
-    m_status->setColor(error ? ccColor3B{255, 144, 138} : ccColor3B{106, 231, 221});
-    m_status->limitLabelWidth(445, .30f, .17f);
+    m_status->setString(text.c_str()); m_status->setColor(error ? ccColor3B{255, 144, 138} : ccColor3B{106, 231, 221});
+    m_status->limitLabelWidth(385, .30f, .17f);
 }
-
 void HoldPopup::failure(std::exception const& e) {
     auto data = matjson::Value::object(); data["message"] = e.what();
     std::string code = "ERROR";
@@ -67,138 +72,122 @@ void HoldPopup::failure(std::exception const& e) {
     m_prepared.reset(); m_create->setEnabled(false); m_create->setOpacity(110);
     FLAlertLayer::create("HoldForge", fmt::format("<cr>{}</c>\n{}", code, e.what()), "OK")->show();
 }
-
 void HoldPopup::onImport(CCObject*) {
     m_picker.spawn(file::pick(file::PickMode::OpenFile, {{}, {{"Silicate macro", {"*.slc"}}}}),
         [this](file::PickResult result) {
             if (result.isErr()) { failure(std::runtime_error(result.unwrapErr())); return; }
             auto path = result.unwrap(); if (!path) return;
             try {
-                Diagnostics::get().refreshContext();
-                m_prepared.reset(); m_replay.reset(); m_calibration.reset(); m_macroPath = *path; m_applied = false;
-                m_create->setEnabled(false); m_create->setOpacity(110); drawTimeline();
+                Diagnostics::get().begin();
+                m_prepared.reset(); m_replay.reset(); m_applied = false;
+                m_create->setEnabled(false); m_create->setOpacity(110);
+                drawTimeline();
                 m_file->setString(utils::string::pathToString(path->filename()).c_str());
-                m_file->limitLabelWidth(440, .43f, .15f); m_stats->setString("Reading macro...");
+                m_file->limitLabelWidth(380, .43f, .15f);
+                m_stats->setString("Reading macro...");
                 Diagnostics::get().set("selected_file", utils::string::pathToString(path->filename()));
                 m_replay = read(*path);
-
+                Workflow::get().select(m_editor, *m_replay, utils::string::pathToString(path->filename()));
                 auto& replay = *m_replay;
                 auto meta = matjson::Value::object();
-                meta["filename"] = utils::string::pathToString(path->filename()); meta["format"] = replay.format;
-                meta["bytes"] = replay.bytes; meta["fingerprint_fnv1a64"] = fmt::format("{:016x}", replay.fingerprint);
-                meta["tps"] = replay.tps; meta["seed"] = replay.seed; meta["version"] = replay.version;
-                meta["build"] = replay.build; meta["randomness"] = replay.randomness;
-                meta["actions"] = replay.actions.size(); meta["skipped_atoms"] = replay.skippedAtoms;
-                Diagnostics::get().set("macro", meta);
-
-                auto macroActions = matjson::Value::array();
-                size_t cap = static_cast<size_t>(Mod::get()->getSettingValue<int64_t>("max-triggers"));
-                size_t written = 0;
-                for (auto const& a : replay.actions) {
-                    if (written++ >= cap) break;
+                meta["filename"] = utils::string::pathToString(path->filename());
+                meta["format"] = replay.format; meta["bytes"] = replay.bytes;
+                meta["fingerprint_fnv1a64"] = fmt::format("{:016x}", replay.fingerprint);
+                meta["tps"] = replay.tps; meta["seed"] = replay.seed;
+                meta["version"] = replay.version; meta["build"] = replay.build;
+                meta["randomness"] = replay.randomness; meta["actions"] = replay.actions.size();
+                meta["skipped_atoms"] = replay.skippedAtoms; Diagnostics::get().set("macro", meta);
+                if (Mod::get()->getSettingValue<bool>("debug-inputs")) for (auto const& a : replay.actions) {
                     auto row = matjson::Value::object(); row["frame"] = a.frame; row["kind"] = static_cast<int>(a.kind);
                     row["down"] = a.down; row["p2"] = a.p2; row["tps"] = a.tps;
-                    if (Mod::get()->getSettingValue<bool>("debug-inputs")) Diagnostics::get().event("macro_input", row);
-                    macroActions.push(std::move(row));
+                    Diagnostics::get().event("input", row);
                 }
-                Diagnostics::get().set("macro_actions", std::move(macroActions));
-                Diagnostics::get().set("macro_actions_truncated", replay.actions.size() > cap);
-
-                auto tracePath = *path; tracePath.replace_extension(".hftrace");
-                bool traceRejected = false;
-                if (std::filesystem::exists(tracePath)) {
-                    try { m_calibration = readCalibration(tracePath, replay); }
-                    catch (Error const& e) {
-                        traceRejected = true;
-                        auto row = matjson::Value::object(); row["code"] = e.code; row["message"] = e.what();
-                        Diagnostics::get().set("trace_sidecar_rejected", row);
-                    }
+                m_file->setString(utils::string::pathToString(path->filename()).c_str());
+                m_file->limitLabelWidth(380, .43f, .15f);
+                if (Workflow::get().trajectory()) onAnalyze(nullptr);
+                else {
+                    m_stats->setString(fmt::format("{} inputs / {} TPS", replay.actions.size(), replay.tps).c_str());
+                    status("Macro loaded - press Record");
                 }
-                Diagnostics::get().set("recorded_positions", m_calibration.has_value());
-                m_stats->setString(fmt::format("SLC{} / {} TPS / {} actions", replay.format, replay.tps, replay.actions.size()).c_str());
-                m_stats->limitLabelWidth(440, .31f, .17f);
-                if (m_calibration) onAnalyze(nullptr);
-                else status(traceRejected ? "Old/foreign trace rejected - Record trace" : "Trace required - Record trace");
             } catch (std::exception const& e) { failure(e); }
         });
 }
-
 void HoldPopup::onAnalyze(CCObject*) {
     if (!m_replay) { status("Import a macro first", true); return; }
-    if (m_applied) { status("Batch already created. Use Undo to retry.", true); return; }
-    if (!m_calibration && !Mod::get()->getSettingValue<bool>("allow-static-fallback")) {
-        status("No valid trace - use Record trace", true); return;
-    }
+    if (m_applied) { status("Batch already created. Close and use Undo to retry.", true); return; }
     try {
-        m_prepared = prepare(m_editor, *m_replay, m_calibration ? &*m_calibration : nullptr);
+        m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
         auto const& p = m_prepared->plan;
-        auto stats = fmt::format("SLC{} / {} TPS / {} triggers / {:.2f}s", m_replay->format, m_replay->tps, p.gates.size(), p.duration);
-        m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(440, .31f, .17f);
-        status(m_calibration ? "Automatic trace verified - Create" : "EXPERIMENTAL static mapping - stock-GD test required", !m_calibration);
+        auto stats = fmt::format("SLC{}  /  {} TPS  /  {} triggers  /  {:.2f}s", m_replay->format, m_replay->tps, p.gates.size(), p.duration);
+        m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(380, .31f, .17f);
+        status(Workflow::get().trajectory() ? "Recorded positions ready - Create, then Verify" :
+            fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
         m_create->setEnabled(true); m_create->setOpacity(255); drawTimeline();
     } catch (std::exception const& e) { failure(e); }
 }
-
-void HoldPopup::onRecord(CCObject*) {
-    if (!m_replay || !m_macroPath) { status("Import a macro first", true); return; }
-    if (m_applied) { status("Undo generated controls before recording", true); return; }
-    try {
-        auto tracePath = *m_macroPath; tracePath.replace_extension(".hftrace");
-        TraceRecorder::get().arm(m_editor, *m_replay, tracePath);
-        Diagnostics::get().set("trace_target", utils::string::pathToString(tracePath.filename()));
-        onClose(nullptr);
-        FLAlertLayer::create("HoldForge trace",
-            "Recorder armed. Start the <cy>Silicate replay from level start</c> in the editor. "
-            "When the macro reaches the end of the level, press the editor <cg>Stop</c> button. "
-            "Stop is the completion signal: all macro edges must have matched and no death/error may have occurred. "
-            "Then reopen HF and import the same .slc.",
-            "OK")->show();
-    } catch (std::exception const& e) { failure(e); }
-}
-
 void HoldPopup::onCreate(CCObject*) {
     if (!m_replay || !m_prepared || m_applied) return;
     try {
-        m_prepared = prepare(m_editor, *m_replay, m_calibration ? &*m_calibration : nullptr);
+        // Re-evaluate the current settings and level immediately before mutation.
+        m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
         auto count = apply(m_editor, *m_prepared); m_applied = true;
+        Workflow::get().generated(m_editor, *m_prepared);
         m_create->setEnabled(false); m_create->setOpacity(110);
-        status(fmt::format("Created {} native triggers - one Undo restores batch", count));
-        FLAlertLayer::create("HoldForge", fmt::format(
-            "<cg>{} native Options Triggers created.</c>\nFinal acceptance: save a copy and verify by ordinary holding with <cy>HoldForge disabled</c>. "
-            "Ordinary dual mirrors one shared stream to P1/P2; 2 Player Mode uses independent P1/P2.", count), "OK")->show();
+        status(fmt::format("Created {} triggers - one Undo restores the batch", count));
+        std::string notes;
+        for (auto const& w : m_prepared->plan.warnings) notes += "\n" + w;
+        FLAlertLayer::create("HoldForge", fmt::format("<cg>{} native Options created.</c>\nNo runtime fixes. Press Verify, turn macro playback OFF, then test holding. Final check: disable HoldForge before publishing.{}", count, notes), "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
-
+void HoldPopup::onRecord(CCObject*) {
+    try {
+        Workflow::get().armRecord(m_editor); status(Workflow::get().status());
+        FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Play</c> on the original level. Play the SAME macro in Silicate from the beginning, without practice/StartPos or noclip.\nComplete the level, return to HF, then Analyze. Recording is saved automatically.", "OK")->show();
+    } catch (std::exception const& e) { failure(e); }
+}
+void HoldPopup::onVerify(CCObject*) {
+    try {
+        Workflow::get().armVerify(m_editor); status(Workflow::get().status());
+        FLAlertLayer::create("Verify native hold", "Turn macro playback and noclip OFF. Close HF, Save and Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes. Return to HF for the result and Export logs.", "OK")->show();
+    } catch (std::exception const& e) { failure(e); }
+}
 void HoldPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
 void HoldPopup::onExport(CCObject*) {
     try {
-        auto path = Diagnostics::get().exportReport(); status("Single diagnostic JSON exported");
-        if (!file::openFolder(path.parent_path())) FLAlertLayer::create("Report saved", utils::string::pathToString(path), "OK")->show();
+        auto path = Diagnostics::get().exportReport();
+        status("Report exported - send the holdforge JSON file");
+        if (!file::openFolder(path.parent_path()))
+            FLAlertLayer::create("Report saved", utils::string::pathToString(path), "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onHelp(CCObject*) {
-    std::string message = "1. Import .slc. 2. Record trace, replay the full source macro in editor, then press editor Stop. 3. Re-import and Create.\n"
-        "Press = allow (-1); release = block (1). Ordinary dual mirrors one shared stream to P1/P2; true 2 Player Mode is independent.\n"
-        "Generated gameplay uses only stock Options behavior: HoldForge does not push/release player input at runtime.\n"
-        "Publication check: test the saved copy by holding with HoldForge disabled. Export logs after any mismatch.";
+    std::string message = "Use a <cy>copy of your level</c> and a full-start, clean macro.\n"
+        "Press = allow control (-1); release = block (1).\n"
+        "Dual shares P1. Two Player Mode uses independent P1/P2 streams.\n"
+        "Record observes Silicate playback; Create writes only native triggers.\n"
+        "Verify compares native hold to the recording. No runtime fixes.\n"
+        "Ordinary dual is NOT confirmed until tested. Final test with HoldForge disabled.\n"
+        "Settings: timing offset, editor layer, debug traces.\n"
+        "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
+    if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;
     FLAlertLayer::create("HoldForge help", message, "OK")->show();
 }
-
 void HoldPopup::drawTimeline() {
     m_timeline->clear();
     for (int p = 0; p < 2; ++p) {
-        float y = p ? 149.f : 174.f;
-        m_timeline->drawSegment({63, y}, {437, y}, 2, {0.22f, .28f, .38f, 1});
+        float y = p ? 170.f : 194.f;
+        m_timeline->drawSegment({63, y}, {399, y}, 2, {0.22f, .28f, .38f, 1});
         if (!m_prepared || m_prepared->plan.duration <= 0) continue;
-        auto const& plan = m_prepared->plan; int state = 1; double start = 0;
+        auto const& plan = m_prepared->plan;
+        int state = 1; double start = 0;
         auto color = p ? ccColor4F{.69f, .59f, 1.f, 1} : ccColor4F{.37f, .9f, .81f, 1};
         for (auto const& g : plan.gates) {
             int next = p ? g.p2 : g.p1; if (!next) continue;
-            if (state == -1) m_timeline->drawSegment({float(63 + 374 * start / plan.duration), y},
-                {float(63 + 374 * g.seconds / plan.duration), y}, 3, color);
+            if (state == -1) m_timeline->drawSegment({float(63 + 336 * start / plan.duration), y},
+                {float(63 + 336 * g.seconds / plan.duration), y}, 3, color);
             state = next; start = g.seconds;
         }
-        if (state == -1) m_timeline->drawSegment({float(63 + 374 * start / plan.duration), y}, {437, y}, 3, color);
+        if (state == -1) m_timeline->drawSegment({float(63 + 336 * start / plan.duration), y}, {399, y}, 3, color);
     }
 }
 }

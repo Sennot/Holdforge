@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.1.6",
+  "version": "v0.2.0-beta.1",
   "developer": "HoldForge",
-  "description": "Convert Silicate macros into stock-GD native Options Triggers using an editor-playtest input-edge trace.",
+  "description": "Record Silicate replay positions, create native Options Triggers and compare hold playback. Beta.",
   "tags": [
     "editor",
     "utility"
@@ -16,6 +16,12 @@
     "conversion": {
       "type": "title",
       "name": "Conversion"
+    },
+    "require-recording": {
+      "type": "bool",
+      "name": "Require recorded trajectory",
+      "default": true,
+      "description": "Record a complete matching Silicate replay before generating. Disabling this uses the approximate editor timeline."
     },
     "strict-240": {
       "type": "bool",
@@ -29,7 +35,7 @@
       "default": 0,
       "min": -1000,
       "max": 1000,
-      "description": "Legacy experimental fallback only. Automatic traces require 0 ms."
+      "description": "Approximate timeline mode only. Positive = later; recorded trajectories require zero offsets."
     },
     "x-offset": {
       "type": "float",
@@ -37,7 +43,7 @@
       "default": 0,
       "min": -300,
       "max": 300,
-      "description": "Legacy experimental fallback only. Automatic traces require 0; no universal X correction is assumed."
+      "description": "Approximate timeline mode only. Moves all generated triggers; recorded trajectories require zero offsets."
     },
     "trigger-y": {
       "type": "float",
@@ -70,17 +76,17 @@
       "type": "title",
       "name": "Experimental"
     },
-    "allow-static-fallback": {
+    "shared-p1-only": {
       "type": "bool",
-      "name": "Allow static timeline fallback",
+      "name": "Diagnostic: shared P1 gates only",
       "default": false,
-      "description": "Experimental only. Allows editor posForTime placement when no valid automatic trace exists. Not publication-safe without a stock-GD hold test."
+      "description": "Native alternative for ordinary dual: leave property 199 unchanged. Not a confirmed dual fix. Regenerate and Verify to compare. Two Player Mode keeps independent gates."
     },
     "unsafe-timeline": {
       "type": "bool",
       "name": "Experimental timeline",
       "default": false,
-      "description": "Allow selected dynamic mechanics only for the experimental editor-time fallback. Reverse/teleport/rotated gameplay remain rejected."
+      "description": "Allow an attempt on levels with dash, teleport, timewarp or direction mechanics. This does not add support for them; recording rejects reversed X and incompatible clocks."
     },
     "allow-existing-controls": {
       "type": "bool",
@@ -113,8 +119,8 @@
     "debug-runtime": {
       "type": "bool",
       "name": "Trace playtest inputs and triggers",
-      "default": true,
-      "description": "Log native Options before/after, actual buttons, P1/P2 state, dual transitions, deaths and playtest state into the one-file export. Logging only; never changes gameplay input."
+      "default": false,
+      "description": "Record Options before/after, dual transitions, physical input, jump buffers, modes, level time, normal-play death attempts/results, resets and editor damage. Noclip or other hooks can suppress deaths before this hook sees them. Adds logging overhead."
     },
     "debug-objects": {
       "type": "bool",

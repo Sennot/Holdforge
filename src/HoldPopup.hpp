@@ -8,9 +8,7 @@ class HoldPopup : public geode::Popup {
     LevelEditorLayer* m_editor = nullptr;
     geode::async::TaskHolder<geode::utils::file::PickResult> m_picker;
     std::optional<Replay> m_replay;
-    std::optional<Calibration> m_calibration;
     std::optional<Prepared> m_prepared;
-    std::optional<std::filesystem::path> m_macroPath;
     cocos2d::CCLabelBMFont* m_file = nullptr;
     cocos2d::CCLabelBMFont* m_status = nullptr;
     cocos2d::CCLabelBMFont* m_stats = nullptr;
@@ -23,6 +21,7 @@ class HoldPopup : public geode::Popup {
     void onImport(cocos2d::CCObject*);
     void onAnalyze(cocos2d::CCObject*);
     void onRecord(cocos2d::CCObject*);
+    void onVerify(cocos2d::CCObject*);
     void onCreate(cocos2d::CCObject*);
     void onSettings(cocos2d::CCObject*);
     void onExport(cocos2d::CCObject*);

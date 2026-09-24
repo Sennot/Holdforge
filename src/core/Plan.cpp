@@ -28,7 +28,7 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         }
     };
     checkTps(tps);
-    out.gates.push_back({0, 0, 1, 1});
+    out.gates.push_back({0, 0, 1, (!config.twoPlayer && config.sharedP1Only) ? 0 : 1});
     for (auto const& a : replay.actions) {
         if (a.frame < previousFrame) throw Error("PLAN_ORDER", "Non-monotonic frame sequence");
         seconds += static_cast<double>(a.frame - previousFrame) / tps;
@@ -50,10 +50,8 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         if (time < 0) throw Error("PLAN_NEGATIVE", "Offset moves an input before level start");
         Gate gate{a.frame, time, 0, 0};
         int state = a.down ? -1 : 1;
-        if (p == 0) {
-            gate.p1 = state;
-            if (!config.twoPlayer) gate.p2 = state; // One shared native stream gates both ordinary-dual players.
-        } else gate.p2 = state;
+        if (p == 0) { gate.p1 = state; if (!config.twoPlayer && !config.sharedP1Only) gate.p2 = state; }
+        else gate.p2 = state;
         if (out.gates.back().seconds == time) {
             auto& prev = out.gates.back();
             if (gate.p1) prev.p1 = gate.p1;
@@ -64,8 +62,7 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
     out.duration = out.gates.back().seconds;
     if (config.twoPlayer && streams[1].empty()) out.warnings.push_back("No P2 inputs: P2 controls stay blocked throughout this conversion.");
     if (down[0] || down[1]) out.warnings.push_back("Macro ends while held: final controls remain enabled, matching the macro.");
-    out.warnings.push_back("Native Options output: ordinary dual mirrors one shared stream to P1/P2; 2 Player Mode uses independent P1/P2 streams.");
-    out.warnings.push_back("Record an automatic trace for exact placement; editor timeline fallback still requires an in-game hold test.");
+    out.warnings.push_back("Editor timeline mapping requires an in-game hold test. Offset may need calibration.");
     return out;
 }
 }

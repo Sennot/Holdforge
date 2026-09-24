@@ -13,7 +13,6 @@ class Diagnostics {
 public:
     static Diagnostics& get();
     void begin();
-    void refreshContext();
     void set(std::string const& key, matjson::Value value);
     void event(std::string const& type, matjson::Value data = matjson::Value::object());
     std::filesystem::path exportReport();

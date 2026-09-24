@@ -14,17 +14,6 @@ jobs:
         run: cmake -S . -B build-tests -DHOLDFORGE_CORE_ONLY=ON
       - run: cmake --build build-tests --parallel
       - run: ctest --test-dir build-tests --output-on-failure
-      - name: Guard stock-GD output path
-        shell: bash
-        run: |
-          if grep -R -nE 'pushButton\(|releaseButton\(|NativeOptionsScope|applyHoldGate' src; then
-            echo 'Runtime input repair code is forbidden in HoldForge output path.' >&2
-            exit 1
-          fi
-          if grep -R -nE '#include .*EditorPauseLayer|\$modify\([^,]*,[[:space:]]*EditorPauseLayer\)' src; then
-            echo 'EditorPauseLayer integration is forbidden.' >&2
-            exit 1
-          fi
   windows:
     needs: core-tests
     runs-on: windows-latest

@@ -8,15 +8,16 @@ std::string Diagnostics::stamp() {
         std::chrono::system_clock::now().time_since_epoch()).count());
 }
 std::filesystem::path Diagnostics::folder() { return Mod::get()->getSaveDir() / "diagnostics"; }
-void Diagnostics::refreshContext() {
+void Diagnostics::begin() {
+    m_journal.close(); m_events.clear(); m_dropped = 0; m_written = 0;
+    m_summary = matjson::Value::object(); m_session = stamp();
+    m_summary["schema"] = 4; m_summary["session"] = m_session;
     m_summary["mod"] = Mod::get()->getVersion().toVString();
     m_summary["sdk"] = "5.10.1"; m_summary["target_gd"] = "2.2081";
     m_summary["loader"] = Loader::get()->getVersion().toVString();
     m_summary["platform"] = "win64";
-    if (auto gm = GameManager::get())
-        m_summary["gd_flip_2p_controls"] = gm->getGameVariable("0010");
     auto settings = matjson::Value::object();
-    for (auto key : {"strict-240", "unsafe-timeline", "allow-static-fallback", "allow-existing-controls", "backup-level",
+    for (auto key : {"strict-240", "unsafe-timeline", "allow-existing-controls", "backup-level", "require-recording", "shared-p1-only",
                     "debug-enabled", "debug-inputs", "debug-mapping", "debug-runtime", "debug-objects", "debug-mods"})
         settings[key] = Mod::get()->getSettingValue<bool>(key);
     settings["offset-ms"] = Mod::get()->getSettingValue<double>("offset-ms");
@@ -34,12 +35,6 @@ void Diagnostics::refreshContext() {
         }
         m_summary["mods"] = std::move(mods);
     }
-}
-void Diagnostics::begin() {
-    m_journal.close(); m_events.clear(); m_dropped = 0; m_written = 0;
-    m_summary = matjson::Value::object(); m_session = stamp();
-    m_summary["schema"] = 4; m_summary["session"] = m_session;
-    refreshContext();
     std::error_code ec; std::filesystem::create_directories(folder(), ec);
     if (Mod::get()->getSettingValue<bool>("debug-enabled") && !ec) {
         // Two bounded journals; flush after each event so a crash leaves usable evidence.

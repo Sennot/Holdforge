@@ -1,7 +1,7 @@
 #pragma once
 #include "Slc.hpp"
 namespace hf {
-struct PlanConfig { bool twoPlayer = false; bool strict240 = true; double offsetMs = 0; size_t maxTriggers = 50000; };
+struct PlanConfig { bool twoPlayer = false; bool strict240 = true; double offsetMs = 0; size_t maxTriggers = 50000; bool sharedP1Only = false; };
 struct Gate {
     uint64_t frame = 0;
     double seconds = 0;
