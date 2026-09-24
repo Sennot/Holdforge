@@ -4,6 +4,26 @@
 #include <iomanip>
 #include <locale>
 namespace hf {
+namespace {
+constexpr size_t MaxSteps = 240 * 3600 + 2;
+bool validSample(Sample const& s) {
+    for (double value : {s.time, s.x, s.y, s.p2x, s.p2y, s.velocity1, s.velocity2, s.size1, s.size2})
+        if (!std::isfinite(value) || std::abs(value) > 1e7) return false;
+    return s.time >= 0 && s.time <= 3600 && s.mode1 >= 0 && s.mode1 <= 7 && s.mode2 >= 0 && s.mode2 <= 7
+        && s.size1 > 0 && s.size1 <= 10 && s.size2 > 0 && s.size2 <= 10;
+}
+void writeSample(std::ostream& out, Sample const& s) {
+    out << s.time << ' ' << s.x << ' ' << s.y << ' ' << s.p2x << ' ' << s.p2y << ' '
+        << s.dual << ' ' << s.mode1 << ' ' << s.mode2 << ' ' << s.held1 << ' ' << s.held2 << ' '
+        << s.velocity1 << ' ' << s.velocity2 << ' ' << s.size1 << ' ' << s.size2 << ' '
+        << s.upside1 << ' ' << s.upside2 << ' ' << s.disabled1 << ' ' << s.disabled2;
+}
+void readSample(std::istream& in, Sample& s) {
+    if (!(in >> s.time >> s.x >> s.y >> s.p2x >> s.p2y >> s.dual >> s.mode1 >> s.mode2 >> s.held1 >> s.held2
+        >> s.velocity1 >> s.velocity2 >> s.size1 >> s.size2 >> s.upside1 >> s.upside2 >> s.disabled1 >> s.disabled2)
+        || !validSample(s)) throw Error("CAPTURE_CACHE", "Invalid physics sample in trajectory");
+}
+}
 uint64_t fingerprint(std::string const& text) {
     uint64_t h = 14695981039346656037ULL;
     for (unsigned char c : text) { h ^= c; h *= 1099511628211ULL; }
@@ -41,7 +61,7 @@ Recorder::Recorder(Replay const& replay, uint64_t hash, bool twoPlayer)
     m_trace.macroHash = replay.fingerprint; m_trace.levelHash = hash; m_trace.twoPlayer = twoPlayer;
 }
 void Recorder::step(Sample const& s) {
-    if (!std::isfinite(s.time) || s.time < 0 || s.time > 3600 || !std::isfinite(s.x))
+    if (!validSample(s))
         throw Error("CAPTURE_TIME", "Invalid gameplay clock/position");
     if (!m_step) {
         if (s.time > 1.5 / 240.0) throw Error("CAPTURE_START", "Start the replay from the beginning without StartPos or checkpoints");
@@ -86,6 +106,15 @@ bool Recorder::input(bool down, bool p2, Sample const& s) {
     return true;
 }
 void Recorder::stepEnd(Sample const& s) {
+    if (!validSample(s) || !m_step || std::abs(s.time - m_step->time) > 1e-7)
+        throw Error("CAPTURE_PHASE", "Invalid post-queue physics sample");
+    if (m_trace.steps.empty() || s.time > m_trace.steps.back().time + 1e-7) {
+        if (m_trace.steps.size() >= MaxSteps) throw Error("CAPTURE_LIMIT", "Physics recording exceeds one hour");
+        m_trace.steps.push_back(s);
+    } else if (std::abs(s.time - m_trace.steps.back().time) <= 1e-7) m_trace.steps.back() = s;
+    else throw Error("CAPTURE_RESET", "Post-queue clock moved backwards");
+    m_trace.sawDual |= s.dual;
+
     for (auto it = m_trace.inputs.rbegin(); it != m_trace.inputs.rend() && std::abs(it->sample.time - s.time) < 1e-7; ++it) {
         it->after = s; it->hasAfter = true;
     }
@@ -97,28 +126,29 @@ Trajectory Recorder::finish(double endTime) {
         throw Error("CAPTURE_END", "Invalid level completion time");
     for (auto const& r : m_trace.inputs) if (!r.hasAfter)
         throw Error("CAPTURE_PHASE", "Missing post-input phase snapshot");
+    if (m_trace.steps.empty() || endTime < m_trace.steps.back().time || endTime-m_trace.steps.back().time > 1.5/240.0)
+        throw Error("CAPTURE_INCOMPLETE", "Recording does not reach the level completion physics step");
     m_trace.completed = true; m_trace.endTime = endTime; return m_trace;
 }
 void writeTrajectory(std::ostream& out, Trajectory const& t) {
     out.imbue(std::locale::classic());
-    out << "HFTRACE2 " << std::hex << t.macroHash << ' ' << t.levelHash << std::dec << ' '
+    out << "HFTRACE3 " << std::hex << t.macroHash << ' ' << t.levelHash << std::dec << ' '
         << t.twoPlayer << ' ' << t.completed << ' ' << t.sawDual << ' ' << std::setprecision(17)
-        << t.endTime << ' ' << t.clockOffset << ' ' << t.inputs.size() << '\n';
+        << t.endTime << ' ' << t.clockOffset << ' ' << t.inputs.size() << ' ' << t.steps.size() << '\n';
     for (auto const& r : t.inputs) {
-        auto const& s = r.sample;
-        out << r.frame << ' ' << r.down << ' ' << r.p2 << ' ' << r.previousX << ' ' << r.triggerX << ' '
-            << s.time << ' ' << s.x << ' ' << s.y << ' ' << s.p2x << ' ' << s.p2y << ' '
-            << s.dual << ' ' << s.mode1 << ' ' << s.mode2 << ' '
-            << r.hasAfter << ' ' << r.after.x << ' ' << r.after.y << ' ' << r.after.p2x << ' ' << r.after.p2y << ' '
-            << r.after.dual << ' ' << r.after.mode1 << ' ' << r.after.mode2 << ' ' << r.after.held1 << ' ' << r.after.held2 << '\n';
+        out << r.frame << ' ' << r.down << ' ' << r.p2 << ' ' << r.previousX << ' ' << r.triggerX << ' ' << r.hasAfter << ' ';
+        writeSample(out, r.sample); out << ' '; writeSample(out, r.after); out << '\n';
     }
+    for (auto const& s : t.steps) { writeSample(out, s); out << '\n'; }
     if (!out) throw Error("CAPTURE_SAVE", "Failed to save recorded trajectory");
 }
 Trajectory readTrajectory(std::istream& in, Replay const& replay, uint64_t levelHash, bool twoPlayer) {
     in.imbue(std::locale::classic());
-    Trajectory t; std::string magic; size_t count = 0;
-    if (!(in >> magic >> std::hex >> t.macroHash >> t.levelHash >> std::dec >> t.twoPlayer >> t.completed >> t.sawDual >> t.endTime >> t.clockOffset >> count)
-        || magic != "HFTRACE2" || !t.completed || count == 0 || count > MaxActions || !std::isfinite(t.clockOffset)
+    Trajectory t; std::string magic; size_t count = 0, steps = 0;
+    if (!(in >> magic) || magic != "HFTRACE3")
+        throw Error("CAPTURE_CACHE", "Old trajectory format: Record again to capture the complete dual path");
+    if (!(in >> std::hex >> t.macroHash >> t.levelHash >> std::dec >> t.twoPlayer >> t.completed >> t.sawDual >> t.endTime >> t.clockOffset >> count >> steps)
+        || !t.completed || count == 0 || count > MaxActions || steps == 0 || steps > MaxSteps || !std::isfinite(t.clockOffset)
         || std::min(std::abs(t.clockOffset), std::abs(t.clockOffset - 1.0 / 240.0)) > .25 / 240.0)
         throw Error("CAPTURE_CACHE", "Invalid/incomplete trajectory cache");
     auto expected = traceActions(replay, twoPlayer);
@@ -127,18 +157,13 @@ Trajectory readTrajectory(std::istream& in, Replay const& replay, uint64_t level
     double previousX = -1; uint64_t previousFrame = 0;
     bool sawDual = false;
     for (size_t i = 0; i < count; ++i) {
-        TraceInput r; auto& s = r.sample;
-        if (!(in >> r.frame >> r.down >> r.p2 >> r.previousX >> r.triggerX >> s.time >> s.x >> s.y >> s.p2x >> s.p2y >> s.dual >> s.mode1 >> s.mode2
-            >> r.hasAfter >> r.after.x >> r.after.y >> r.after.p2x >> r.after.p2y >> r.after.dual >> r.after.mode1 >> r.after.mode2 >> r.after.held1 >> r.after.held2))
+        TraceInput r;
+        if (!(in >> r.frame >> r.down >> r.p2 >> r.previousX >> r.triggerX >> r.hasAfter))
             throw Error("CAPTURE_CACHE", "Truncated trajectory cache");
-        r.after.time = s.time;
-        if (!r.hasAfter || !std::isfinite(r.after.x) || !std::isfinite(r.after.y) || !std::isfinite(r.after.p2x) || !std::isfinite(r.after.p2y)
-            || r.after.mode1 < 0 || r.after.mode1 > 7 || r.after.mode2 < 0 || r.after.mode2 > 7)
-            throw Error("CAPTURE_CACHE", "Invalid post-input snapshot");
-        auto const& a = expected[i];
-        if (r.frame != a.frame || r.down != a.down || r.p2 != a.p2 || !std::isfinite(s.time) ||
-            std::abs(s.time - a.frame / 240.0 - t.clockOffset) > .25 / 240.0 || !std::isfinite(s.y) || !std::isfinite(s.x) || !std::isfinite(r.previousX) ||
-            !std::isfinite(s.p2x) || !std::isfinite(s.p2y) || s.mode1 < 0 || s.mode1 > 7 || s.mode2 < 0 || s.mode2 > 7)
+        readSample(in, r.sample); readSample(in, r.after);
+        auto const& s = r.sample; auto const& a = expected[i];
+        if (!r.hasAfter || r.after.time != s.time || r.frame != a.frame || r.down != a.down || r.p2 != a.p2 ||
+            std::abs(s.time - a.frame / 240.0 - t.clockOffset) > .25 / 240.0 || !std::isfinite(r.previousX))
             throw Error("CAPTURE_CACHE", "Trajectory events do not match the macro");
         double x = r.frame ? crossingPosition(r.previousX, s.x) : 0;
         if (!std::isfinite(r.triggerX) || std::abs(x - r.triggerX) > .001 ||
@@ -148,8 +173,24 @@ Trajectory readTrajectory(std::istream& in, Replay const& replay, uint64_t level
         previousX = r.triggerX; previousFrame = r.frame; sawDual |= s.dual;
         t.inputs.push_back(r);
     }
+    t.steps.reserve(steps);
+    size_t edge = 0;
+    for (size_t i = 0; i < steps; ++i) {
+        Sample s; readSample(in, s);
+        if ((!i && s.time > 1.5 / 240.0) || (i && (s.time <= t.steps.back().time + 1e-7 ||
+            s.time - t.steps.back().time > 1.5 / 240.0 || s.x < t.steps.back().x)))
+            throw Error("CAPTURE_CACHE", "Missing/reversed physics steps in trajectory");
+        while (edge < t.inputs.size() && t.inputs[edge].after.time <= s.time + 1e-7) {
+            auto const& a = t.inputs[edge++].after;
+            if (std::abs(a.time-s.time) > 1e-7 || a.x != s.x || a.y != s.y || a.p2x != s.p2x || a.p2y != s.p2y ||
+                a.dual != s.dual || a.mode1 != s.mode1 || a.mode2 != s.mode2 || a.held1 != s.held1 || a.held2 != s.held2 || a.upside1 != s.upside1 || a.upside2 != s.upside2 || a.size1 != s.size1 || a.size2 != s.size2 || a.velocity1 != s.velocity1 || a.velocity2 != s.velocity2)
+                throw Error("CAPTURE_CACHE", "Input and continuous trajectory disagree");
+        }
+        sawDual |= s.dual; t.steps.push_back(s);
+    }
     std::string extra;
-    if ((in >> extra) || !std::isfinite(t.endTime) || t.endTime < t.inputs.back().sample.time || t.endTime > 3600 || (sawDual && !t.sawDual))
+    if ((in >> extra) || edge != t.inputs.size() || !std::isfinite(t.endTime) || t.endTime < t.steps.back().time ||
+        t.endTime > 3600 || t.endTime-t.steps.back().time > 1.5/240.0 || (sawDual && !t.sawDual))
         throw Error("CAPTURE_CACHE", "Invalid trajectory completion metadata");
     return t;
 }

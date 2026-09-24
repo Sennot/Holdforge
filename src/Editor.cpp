@@ -1,6 +1,7 @@
 #include "Editor.hpp"
 #include "Diagnostics.hpp"
 #include <fstream>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <unordered_map>
@@ -28,14 +29,17 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     // Conservative gate: these mechanics can make an editor timeline differ from actual movement.
     std::unordered_map<int, std::string> risks{
         {1917, "Reverse"}, {1935, "TimeWarp"}, {3022, "Teleport trigger"},
-        {747, "Teleport portal"}, {749, "Teleport exit"}, {1704, "Dash orb"},
+        {747, "Teleport portal"}, {749, "Teleport exit"}, {2064, "Unlinked teleport portal"},
+        {2065, "Teleport exit"}, {3027, "Teleport orb"}, {1704, "Dash orb"},
         {1751, "Gravity dash orb"}, {2900, "Gameplay rotation"},
         {2901, "Gameplay offset"}, {1932, "Player Control"}
     };
     bool unsafe = mod->getSettingValue<bool>("unsafe-timeline");
     std::vector<std::string> warnings;
+    bool containsDual = settings->m_startDual;
     if (settings->m_rotateGameplay && !unsafe) throw Error("LEVEL_ROTATE", "Rotated gameplay needs a recorded trajectory; timeline conversion is disabled");
     for (auto obj : CCArrayExt<GameObject*>(editor->m_objects)) {
+        containsDual |= obj->m_objectID == 286;
         if (auto options = typeinfo_cast<GameOptionsTrigger*>(obj)) {
             if ((options->m_disableP1Controls != GameOptionsSetting::Disabled ||
                  options->m_disableP2Controls != GameOptionsSetting::Disabled) &&
@@ -49,6 +53,8 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
             if (std::find(warnings.begin(), warnings.end(), warning) == warnings.end()) warnings.push_back(warning);
         }
     }
+    if (requireRecording && !calibration && containsDual && !settings->m_twoPlayerMode && mod->getSettingValue<bool>("dual-auto"))
+        throw Error("AUTO_RECORD", "Invisible dual needs a NEW full Record, even when Require recorded trajectory is disabled");
     PlanConfig cfg;
     cfg.twoPlayer = settings->m_twoPlayerMode; cfg.strict240 = mod->getSettingValue<bool>("strict-240");
     cfg.offsetMs = mod->getSettingValue<double>("offset-ms");
@@ -61,6 +67,9 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     effective["native_only"] = true;
     effective["shared_p1_only"] = cfg.sharedP1Only;
     out.plan = plan(replay, cfg);
+    bool autoDual = calibration && calibration->sawDual && !cfg.twoPlayer && mod->getSettingValue<bool>("dual-auto");
+    effective["invisible_dual_auto"] = autoDual;
+    if (autoDual) for (auto& g : out.plan.gates) g.p2 = 1;
     if (calibration) {
         if (!calibration->completed || calibration->twoPlayer != cfg.twoPlayer || calibration->macroHash != replay.fingerprint || calibration->levelHash != hash)
             throw Error("TRACE_LEVEL", "Recorded positions need the unmodified original level. Remove the old hold triggers first. The level must match the recorded run.");
@@ -70,7 +79,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         // meaningful planner warnings such as a missing independent P2 stream.
         if (!out.plan.warnings.empty()) out.plan.warnings.pop_back();
         out.plan.warnings.push_back("Recorded physics-step positions loaded. Use Verify, then test with HoldForge disabled before publishing.");
-        if (calibration->sawDual && !cfg.twoPlayer)
+        if (calibration->sawDual && !cfg.twoPlayer && !autoDual)
             out.plan.warnings.push_back("Ordinary dual uses native control gates. P2 hold reactivation is not confirmed; Verify must check it. No runtime fixes are applied.");
     }
     effective["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
@@ -104,7 +113,52 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
             debug.event("placement", row);
         }
     }
+    if (autoDual) {
+        // Detached native prototype: validate object ID/type and actual hitbox
+        // before changing the editor. Never assume a Teleport trigger targets P2.
+        auto prototype = typeinfo_cast<TeleportPortalObject*>(GameObject::createWithKey(2064));
+        if (!prototype || prototype->m_objectType != GameObjectType::TeleportPortal || prototype->m_orangePortal)
+            throw Error("AUTO_PORTAL_TYPE", "GD does not recognize the expected unlinked touch portal (2064); export logs");
+        prototype->setRScale(.5f);
+        auto rect = prototype->getObjectRect();
+        AutoPathConfig ac;
+        ac.layer = layer; ac.maxObjects = cfg.maxTriggers - out.placements.size();
+        ac.halfWidth = rect.size.width / 2; ac.halfHeight = rect.size.height / 2;
+        if (ac.halfWidth <= 0 || ac.halfHeight <= 0 || ac.halfWidth > 100 || ac.halfHeight > 100)
+            throw Error("AUTO_PORTAL_BOUNDS", "Unexpected native portal hitbox; export logs");
+        out.autoPath = makeAutoPath(*calibration, out.levelBefore, ac);
+        // A dual portal may reset the new icon's controls. Re-block it when
+        // each segment starts, even when there is no macro edge at entry.
+        double lastTime = -1;
+        for (auto const& a : out.autoPath.anchors) {
+            if (lastTime < 0 || a.time-lastTime > 1.5/240.0) {
+                auto found = std::find_if(out.placements.begin(), out.placements.end(), [&](Placement const& p) { return std::abs(p.x-a.onX) < .01; });
+                if (found == out.placements.end()) {
+                    Gate gate{static_cast<uint64_t>(std::llround(std::max(0.0, a.time-calibration->clockOffset)*240)), a.time, 0, 1};
+                    Placement p{gate, static_cast<float>(a.onX), y, {}};
+                    p.object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,0,199,1;", p.x, p.y, layer);
+                    out.placements.push_back(p);
+                }
+            }
+            lastTime = a.time;
+            if (mod->getSettingValue<bool>("debug-mapping")) {
+                auto j = matjson::Value::object(); j["step"] = a.step; j["time"] = a.time; j["mode"] = a.mode;
+                j["x"] = a.x; j["y"] = a.y; j["target_y"] = a.targetY; j["on_x"] = a.onX; j["off_x"] = a.offX;
+                j["portal_group"] = a.portalGroup; j["target_group"] = a.targetGroup;
+                debug.event("auto_anchor", j);
+            }
+        }
+        std::sort(out.placements.begin(), out.placements.end(), [](Placement const& a, Placement const& b) { return a.x < b.x; });
+        if (out.placements.size() + out.autoPath.objects.size() > cfg.maxTriggers)
+            throw Error("AUTO_OBJECT_LIMIT", "Options plus invisible helpers exceed Maximum generated objects");
+        auto j = matjson::Value::object(); j["anchors"] = out.autoPath.anchors.size(); j["objects"] = out.autoPath.objects.size();
+        j["segments"] = out.autoPath.segments; j["portal_half_width"] = ac.halfWidth; j["portal_half_height"] = ac.halfHeight;
+        j["modes"] = matjson::Value::array(); for (auto n : out.autoPath.modes) j["modes"].push(n);
+        debug.set("invisible_dual_auto", j);
+        out.plan.warnings.push_back("Experimental invisible dual path: native touch portals, 240 corrections/sec. Preserves forms; does not reproduce P2 input/rotation/gravity. Verify and test without mods.");
+    }
     auto report = matjson::Value::object(); report["triggers"] = out.placements.size();
+    report["auto_objects"] = out.autoPath.objects.size();
     report["p1_events"] = out.plan.p1Events; report["p2_events"] = out.plan.p2Events;
     report["duplicates_removed"] = out.plan.duplicates; report["duration_seconds"] = out.plan.duration;
     report["warnings"] = matjson::Value::array(); for (auto const& w : out.plan.warnings) report["warnings"].push(w);
@@ -126,24 +180,51 @@ size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
     }
     std::string text;
     for (auto const& p : prepared.placements) text += p.object;
+    for (auto const& p : prepared.autoPath.objects) text += p.object;
     Diagnostics::get().set("stage", "creating_objects");
     Ref<CCArray> objects = editor->createObjectsFromString(text, true, true);
     auto rollback = [&] {
         if (objects) for (auto obj : CCArrayExt<GameObject*>(objects.data())) editor->removeObject(obj, true);
         editor->dirtifyTriggers();
     };
-    if (!objects || objects->count() != prepared.placements.size()) {
+    if (!objects || objects->count() != prepared.placements.size() + prepared.autoPath.objects.size()) {
         rollback(); throw Error("EDITOR_CREATE", "Incomplete object creation; imported objects rolled back");
     }
     size_t i = 0;
     for (auto obj : CCArrayExt<GameObject*>(objects.data())) {
-        auto options = typeinfo_cast<GameOptionsTrigger*>(obj);
-        auto const& expected = prepared.placements.at(i++);
-        if (!options || static_cast<int>(options->m_disableP1Controls) != expected.gate.p1 ||
-            static_cast<int>(options->m_disableP2Controls) != expected.gate.p2 ||
-            std::abs(obj->getPositionX() - expected.x) > 0.01f || options->m_isSpawnTriggered || options->m_isTouchTriggered) {
-            rollback(); throw Error("EDITOR_VERIFY", "GD did not deserialize Options Triggers as expected; batch rolled back");
+        bool ok = false;
+        if (i < prepared.placements.size()) {
+            auto options = typeinfo_cast<GameOptionsTrigger*>(obj);
+            auto const& e = prepared.placements[i];
+            ok = options && static_cast<int>(options->m_disableP1Controls) == e.gate.p1 &&
+                static_cast<int>(options->m_disableP2Controls) == e.gate.p2 &&
+                std::abs(obj->getPositionX()-e.x) <= .01f && !options->m_isSpawnTriggered && !options->m_isTouchTriggered;
+        } else {
+            auto const& e = prepared.autoPath.objects[i-prepared.placements.size()];
+            ok = obj->m_objectID == e.id && std::abs(obj->getPositionX()-e.x) <= .01f &&
+                std::abs(obj->getPositionY()-e.y) <= .01f && obj->m_isHide && obj->m_hasNoEffects && obj->m_hasNoParticles;
+            if (e.group) ok = ok && obj->m_groupCount == 1 && obj->getGroupID(0) == e.group;
+            if (e.kind == AutoKind::Portal) {
+                auto portal = typeinfo_cast<TeleportPortalObject*>(obj);
+                ok = ok && portal && portal->m_objectType == GameObjectType::TeleportPortal && !portal->m_orangePortal &&
+                    portal->m_targetGroupID == e.target && portal->m_isTouchTriggered && !portal->m_isSpawnTriggered &&
+                    !portal->m_isNoTouch && portal->m_ignoreX && !portal->m_ignoreY && !portal->m_saveOffset &&
+                    portal->m_staticForceEnabled && portal->m_staticForce == 0 && !portal->m_staticForceAdditive &&
+                    !portal->m_redirectForceEnabled && portal->m_gravityMode == 0;
+            } else if (e.kind == AutoKind::Target) ok = ok && obj->m_isNoTouch;
+            else {
+                auto toggle = typeinfo_cast<EffectGameObject*>(obj);
+                ok = ok && toggle && toggle->m_targetGroupID == e.target && toggle->m_activateGroup == e.enabled &&
+                    !toggle->m_isSpawnTriggered && !toggle->m_isTouchTriggered;
+            }
         }
+        if (!ok) {
+            auto j = matjson::Value::object(); j["index"] = i; j["id"] = obj->m_objectID;
+            j["serialized"] = std::string(obj->getSaveString(editor));
+            Diagnostics::get().set("object_readback_error", j);
+            rollback(); throw Error("EDITOR_VERIFY", "GD did not deserialize a generated object as expected; batch rolled back. Export logs");
+        }
+        ++i;
     }
     auto undo = UndoObject::createWithArray(objects.data(), UndoCommand::Paste);
     if (!undo) { rollback(); throw Error("EDITOR_UNDO", "Could not allocate undo entry; batch rolled back"); }
@@ -155,7 +236,7 @@ size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
     }
     Diagnostics::get().set("created", objects->count());
     Diagnostics::get().set("stage", "batch_complete");
-    log::info("HoldForge created {} Options Triggers", objects->count());
+    log::info("HoldForge created {} native objects", objects->count());
     return objects->count();
 }
 }

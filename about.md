@@ -1,14 +1,15 @@
 # HoldForge
 
-Convert Silicate `.slc` v2/v3 input events into native Options Triggers.
-Open **HF** on the left side of the stopped level editor.
+Import Silicate `.slc` v2/v3, record a complete replay, create native Options
+and experimental invisible dual path helpers.
 
-**Import → Record → Analyze → Create → Verify.** Record observes a full Silicate
-replay through Save and Play. Verify compares a continuous-hold run to that
-recording and reports the first mismatch at an observed input frame.
+**Import → Record → Analyze → Create → Verify.** Use Save and Exit, then
+normal Play; Save and Play is optional. A NEW recording is needed for this version.
 
-Includes independent two-player planning, a timeline preview, one undo entry,
-level backups and debug reports. No runtime input/physics corrections are applied.
+The invisible auto generator accepts all eight forms in ordinary dual. It uses
+hidden native touch portals, preserving X and approximating the recorded Y path.
+This is an experimental path conversion, not a guarantee of all-mode correctness.
+Overlapping P1/P2 paths and insufficient group IDs stop generation.
 
-**Beta:** ordinary dual and exact native trigger timing require in-game testing.
-Before publishing a level, test with HoldForge and gameplay-altering mods disabled.
+Includes backups, one Undo operation and detailed mismatch reports. Gameplay
+hooks only observe. Test the saved result with HoldForge disabled before publishing.

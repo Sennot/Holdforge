@@ -11,6 +11,9 @@ struct Sample {
     bool dual = false;
     int mode1 = 0, mode2 = 0;
     bool held1 = false, held2 = false;
+    double velocity1 = 0, velocity2 = 0, size1 = 1, size2 = 1;
+    bool upside1 = false, upside2 = false;
+    bool disabled1 = false, disabled2 = false;
 };
 struct TraceInput {
     uint64_t frame = 0;
@@ -25,6 +28,8 @@ struct Trajectory {
     bool twoPlayer = false, completed = false, sawDual = false;
     double endTime = 0, clockOffset = 0;
     std::vector<TraceInput> inputs;
+    // Post-queue samples from every physics step, including periods without clicks.
+    std::vector<Sample> steps;
     double position(uint64_t frame) const;
 };
 uint64_t fingerprint(std::string const& text);

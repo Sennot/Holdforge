@@ -77,8 +77,8 @@ matjson::Value state(GJBaseGameLayer* layer) {
     if (layer->m_player1) { row["p1_disabled"] = layer->m_player1->m_controlsDisabled; row["p1_buffered"] = layer->m_player1->m_jumpBuffered; row["p1_dead"] = layer->m_player1->m_isDead; }
     if (layer->m_player2) { row["p2_disabled"] = layer->m_player2->m_controlsDisabled; row["p2_buffered"] = layer->m_player2->m_jumpBuffered; row["p2_dead"] = layer->m_player2->m_isDead; }
     if (layer->m_uiLayer) {
-        row["ui_p1"] = layer->m_uiLayer->m_p1Jumping || layer->m_uiLayer->m_p1TouchId != -1;
-        row["ui_p2"] = layer->m_uiLayer->m_p2Jumping || layer->m_uiLayer->m_p2TouchId != -1;
+        row["ui_p1"] = layer->m_uiLayer->isJumpButtonPressed(true);
+        row["ui_p2"] = layer->m_uiLayer->isJumpButtonPressed(false);
     }
     return row;
 }
@@ -110,6 +110,12 @@ class $modify(HFTrace, GJBaseGameLayer) {
         row["disable_p1"] = static_cast<int>(object->m_disableP1Controls);
         row["disable_p2"] = static_cast<int>(object->m_disableP2Controls);
         hf::Diagnostics::get().event("options_activated", row);
+    }
+    void teleportPlayer(TeleportPortalObject* object, PlayerObject* player) {
+        bool observing = hf::Workflow::get().active(this);
+        auto before = observing ? hf::sample(this) : hf::Sample{};
+        GJBaseGameLayer::teleportPlayer(object, player);
+        if (observing) hf::Workflow::get().teleported(this, object, player, before);
     }
     void toggleDualMode(GameObject* object, bool dual, PlayerObject* player, bool noEffects) {
         bool logging = trace() || hf::Workflow::get().active(this);

@@ -31,7 +31,7 @@ bool HoldPopup::init(LevelEditorLayer* editor) {
     m_bgSprite->setColor({21, 29, 48});
     setTitle("HOLDFORGE", "bigFont.fnt", .65f, 21.f);
     m_title->setColor({106, 231, 221});
-    label(m_mainLayer, "RECORD  >  NATIVE OPTIONS  >  VERIFY", 220, 284, .27f, {148, 164, 194});
+    label(m_mainLayer, "RECORD  >  OPTIONS + AUTO  >  VERIFY", 220, 284, .27f, {148, 164, 194});
     auto card = NineSlice::create("GJ_square02.png"); card->setContentSize({404, 138});
     card->setColor({34, 45, 67}); card->setPosition({220, 201}); m_mainLayer->addChild(card);
     m_file = label(m_mainLayer, "Choose a .slc macro", 220, 251, .43f);
@@ -118,7 +118,7 @@ void HoldPopup::onAnalyze(CCObject*) {
     try {
         m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
         auto const& p = m_prepared->plan;
-        auto stats = fmt::format("SLC{}  /  {} TPS  /  {} triggers  /  {:.2f}s", m_replay->format, m_replay->tps, p.gates.size(), p.duration);
+        auto stats = fmt::format("SLC{}  /  {} TPS  /  {} objects  /  {:.2f}s", m_replay->format, m_replay->tps, m_prepared->placements.size() + m_prepared->autoPath.objects.size(), p.duration);
         m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(380, .31f, .17f);
         status(Workflow::get().trajectory() ? "Recorded positions ready - Create, then Verify" :
             fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
@@ -133,22 +133,22 @@ void HoldPopup::onCreate(CCObject*) {
         auto count = apply(m_editor, *m_prepared); m_applied = true;
         Workflow::get().generated(m_editor, *m_prepared);
         m_create->setEnabled(false); m_create->setOpacity(110);
-        status(fmt::format("Created {} triggers - one Undo restores the batch", count));
+        status(fmt::format("Created {} objects - one Undo restores the batch", count));
         std::string notes;
         for (auto const& w : m_prepared->plan.warnings) notes += "\n" + w;
-        FLAlertLayer::create("HoldForge", fmt::format("<cg>{} native Options created.</c>\nNo runtime fixes. Press Verify, turn macro playback OFF, then test holding. Final check: disable HoldForge before publishing.{}", count, notes), "OK")->show();
+        FLAlertLayer::create("HoldForge", fmt::format("<cg>{} native objects created.</c>\nPress Verify, turn macro playback OFF, Save and Exit, then normal Play holding input. Test with HoldForge disabled before publishing.{}", count, notes), "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onRecord(CCObject*) {
     try {
         Workflow::get().armRecord(m_editor); status(Workflow::get().status());
-        FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Play</c> on the original level. Play the SAME macro in Silicate from the beginning, without practice/StartPos or noclip.\nComplete the level, return to HF, then Analyze. Recording is saved automatically.", "OK")->show();
+        FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Exit</c>, then the normal <cy>Play</c> button on this original level. Keep GD open. Play the SAME macro in Silicate from the beginning, without practice/StartPos or noclip.\nComplete the level, return to HF, then Analyze. Recording is saved automatically.", "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onVerify(CCObject*) {
     try {
         Workflow::get().armVerify(m_editor); status(Workflow::get().status());
-        FLAlertLayer::create("Verify native hold", "Turn macro playback and noclip OFF. Close HF, Save and Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes. Return to HF for the result and Export logs.", "OK")->show();
+        FLAlertLayer::create("Verify native hold", "Turn macro playback and noclip OFF. Close HF, Save and Exit, then normal Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes. Return to HF for the result and Export logs.", "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
@@ -164,9 +164,9 @@ void HoldPopup::onHelp(CCObject*) {
     std::string message = "Use a <cy>copy of your level</c> and a full-start, clean macro.\n"
         "Press = allow control (-1); release = block (1).\n"
         "Dual shares P1. Two Player Mode uses independent P1/P2 streams.\n"
-        "Record observes Silicate playback; Create writes only native triggers.\n"
+        "Record saves every physics step; Create writes native level objects.\n"
         "Verify compares native hold to the recording. No runtime fixes.\n"
-        "Ordinary dual is NOT confirmed until tested. Final test with HoldForge disabled.\n"
+        "Invisible dual auto uses hidden portals along the recorded P2 path. Beta: test without HoldForge.\n"
         "Settings: timing offset, editor layer, debug traces.\n"
         "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
     if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;

@@ -44,7 +44,7 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         a.p2 ? ++out.p2Events : ++out.p1Events;
         size_t p = a.p2 ? 1 : 0;
         if (down[p] == a.down) { ++out.duplicates; continue; }
-        if (lastChange[p] == a.frame) throw Error("PLAN_SAME_FRAME", "Press/release on the same frame (swift) cannot be represented reliably by Options Triggers");
+        if (lastChange[p] == a.frame) throw Error("PLAN_SAME_FRAME", "Swift at frame " + std::to_string(a.frame) + " (" + std::to_string(seconds) + "s): same-frame press/release cannot be represented reliably by Options Triggers");
         lastChange[p] = a.frame; down[p] = a.down;
         double time = seconds + config.offsetMs / 1000;
         if (time < 0) throw Error("PLAN_NEGATIVE", "Offset moves an input before level start");

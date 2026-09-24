@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.2.0-beta.1",
+  "version": "v0.2.1-beta.1",
   "developer": "HoldForge",
-  "description": "Record Silicate replay positions, create native Options Triggers and compare hold playback. Beta.",
+  "description": "Silicate to native hold with recorded invisible dual path helpers. Experimental beta.",
   "tags": [
     "editor",
     "utility"
@@ -61,10 +61,11 @@
     },
     "max-triggers": {
       "type": "int",
-      "name": "Maximum generated triggers",
+      "name": "Maximum generated objects",
       "default": 20000,
       "min": 10,
-      "max": 50000
+      "max": 50000,
+      "description": "Combined limit for Options, portals, target markers and toggles. Invisible dual uses about 960 objects per second."
     },
     "backup-level": {
       "type": "bool",
@@ -75,6 +76,12 @@
     "experimental": {
       "type": "title",
       "name": "Experimental"
+    },
+    "dual-auto": {
+      "type": "bool",
+      "name": "Invisible dual auto (beta)",
+      "default": true,
+      "description": "Ordinary dual: generate hidden native teleport portals along a NEW complete recorded path, for every form. Approximate movement; no P2 clicks. Refuses overlap with P1. Verify before publishing. No effect in Two Player Mode."
     },
     "shared-p1-only": {
       "type": "bool",

@@ -1,6 +1,8 @@
 #include "core/Slc.hpp"
 #include "core/Plan.hpp"
 #include "core/Trajectory.hpp"
+#include "core/AutoPath.hpp"
+#include <set>
 #include <sstream>
 #include <cmath>
 #include <cstring>
@@ -48,7 +50,7 @@ hf::Trajectory capture(hf::Replay const& replay, bool twoPlayer = false, double 
     hf::Recorder recorder(replay, 0x1234, twoPlayer);
     auto inputs = hf::traceActions(replay, twoPlayer);
     size_t next = 0; bool held1 = false, held2 = false;
-    for (uint64_t f = 0; f <= inputs.back().frame; ++f) {
+    for (uint64_t f = 0; f <= inputs.back().frame + 240; ++f) {
         hf::Sample s; s.time = origin + f / 240.0;
         s.x = 10 + 1.25 * f; s.y = 105;
         s.dual = f >= 2; s.p2x = s.x; s.p2y = 200;
@@ -79,6 +81,8 @@ void trajectoryTests() {
         };
         auto loaded = load(output.str());
         check(loaded.position(4) == t.position(4), "trace roundtrip");
+        check(loaded.steps.size() == 245, "full 240 TPS recording including silent tail");
+        check(loaded.steps.back().time == t.steps.back().time, "full path cache roundtrip");
         error([&] { t.position(3); }, "CAPTURE_FRAME");
         error([&] { load(output.str() + "unexpected"); }, "CAPTURE_CACHE");
         error([&] { load(output.str().substr(0, output.str().size() / 2)); }, "CAPTURE_CACHE");
@@ -137,9 +141,75 @@ void trajectoryTests() {
     hf::Recorder noAfter(one, 1, false); s = {}; s.x = 10; noAfter.step(s); noAfter.input(true, false, s);
     error([&] { noAfter.finish(1); }, "CAPTURE_PHASE");
 }
+hf::Trajectory autoTrace(int mode1, int mode2) {
+    hf::Trajectory t; t.completed = true; t.sawDual = true; t.endTime = 60/240.0;
+    for (int i=0; i<=60; ++i) {
+        hf::Sample s; s.time = i/240.0; s.x = 100 + i*1.5; s.y = 100;
+        s.p2x = s.x; s.p2y = 400 + 10*std::sin(i*.05);
+        s.mode1 = mode1; s.mode2 = mode2; s.size1 = mode1%2 ? .6 : 1; s.size2 = mode2%2 ? .6 : 1;
+        s.dual = i>=5 && i<55; t.steps.push_back(s);
+    }
+    return t;
+}
+void autoTests() {
+    // These are serialization/planning tests, NOT a simulation of GD physics.
+    for (int p1=0; p1<8; ++p1) for (int p2=0; p2<8; ++p2) {
+        auto t = autoTrace(p1, p2);
+        auto plan = hf::makeAutoPath(t, "kS38,1;1,1,57,9999.9998,51,9997;");
+        check(plan.segments == 1 && plan.anchors.size() == 49, "every complete dual interval gets a helper");
+        check(plan.modes[p2] == 49 && plan.objects.size() == 197, "all 64 mode pairs share path planner");
+        std::set<int> ids;
+        for (auto const& a : plan.anchors) {
+            check(a.portalGroup < 9997 && a.targetGroup < 9997, "existing and referenced groups reserved");
+            check(ids.insert(a.portalGroup).second && a.portalGroup != a.targetGroup, "unique portal groups and non-self target");
+            check(a.onX > t.steps[a.step-1].x && a.onX < t.steps[a.step].x, "activation inside P1 crossing");
+            check(a.offX > t.steps[a.step].x && a.offX < t.steps[a.step+1].x, "deactivation in following crossing");
+            check(std::abs(a.targetY-t.steps[a.step+1].p2y) <= .051, "target follows next recorded step");
+        }
+        std::set<int> targetMembers;
+        for (auto const& o : plan.objects) if (o.group) check(targetMembers.insert(o.group).second, "exactly one member per target group");
+        for (auto const& a : plan.anchors) check(targetMembers.contains(a.targetGroup), "every teleport target resolves");
+        for (auto const& o : plan.objects) {
+            check(o.object.find(",135,1,") != std::string::npos, "helper serialized hidden");
+            if (o.kind == hf::AutoKind::Target) check(o.object.find(",121,1;") != std::string::npos, "target has no collision");
+            if (o.kind == hf::AutoKind::Portal) {
+                check(o.id == 2064 && o.object.find(",352,1,") != std::string::npos, "native touch portal preserves X");
+                check(o.object.find(",121,1") == std::string::npos, "portal collision must remain enabled");
+            }
+        }
+    }
+    auto t = autoTrace(0, 1);
+    auto used = hf::reservedIDs("kA,0;1,1,57,12.24,51,9000,442,50.80.99;");
+    check(used[12] && used[24] && used[9000] && used[50] && used[99] && !used[442], "IDs reserved in values including remaps");
+    auto overlap = t; overlap.steps[22].y = 400;
+    error([&] { hf::makeAutoPath(overlap, ""); }, "AUTO_P1_OVERLAP");
+    auto two = t; two.twoPlayer = true;
+    error([&] { hf::makeAutoPath(two, ""); }, "AUTO_2P");
+    auto partial = t; partial.completed = false;
+    error([&] { hf::makeAutoPath(partial, ""); }, "AUTO_RECORD");
+    auto tail = t; tail.endTime += 1;
+    error([&] { hf::makeAutoPath(tail, ""); }, "AUTO_RECORD");
+    auto gap = t; gap.steps.erase(gap.steps.begin()+10);
+    error([&] { hf::makeAutoPath(gap, ""); }, "AUTO_STEPS");
+    auto badMode = t; badMode.steps[30].mode2 = 8;
+    error([&] { hf::makeAutoPath(badMode, ""); }, "AUTO_STEPS");
+    auto badPos = t; badPos.steps[30].p2y = std::numeric_limits<double>::infinity();
+    error([&] { hf::makeAutoPath(badPos, ""); }, "AUTO_POSITION");
+    hf::AutoPathConfig limit; limit.maxObjects = 12;
+    error([&] { hf::makeAutoPath(t, "", limit); }, "AUTO_OBJECT_LIMIT");
+    std::string all = "1,1,57,";
+    for (int i=1; i<=9999; ++i) all += std::to_string(i) + ".";
+    all += ";";
+    error([&] { hf::makeAutoPath(t, all); }, "AUTO_GROUP_LIMIT");
+    auto solo = t; solo.sawDual = false; for (auto& s : solo.steps) s.dual = false;
+    check(hf::makeAutoPath(solo, "").objects.empty(), "solo run has no invisible helpers");
+    auto multi = t; for (size_t i=25; i<30; ++i) multi.steps[i].dual = false;
+    check(hf::makeAutoPath(multi, "").segments == 2, "separated dual sections planned independently");
+}
 int main(int argc, char** argv) {
  try {
     trajectoryTests();
+    autoTests();
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");
