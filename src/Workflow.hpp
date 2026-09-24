@@ -9,6 +9,7 @@ matjson::Value sampleJson(Sample const& sample);
 class Workflow {
 public:
     enum class Mode { None, Record, Verify };
+    enum class EditorState { Unselected, Source, Generated, Changed };
 private:
     std::optional<Replay> m_replay;
     std::optional<Trajectory> m_trajectory;
@@ -33,6 +34,7 @@ private:
     void fail(std::string const& code, std::string const& message);
 public:
     static Workflow& get();
+    EditorState editorState(LevelEditorLayer* editor) const;
     Replay const* replay() const { return m_replay ? &*m_replay : nullptr; }
     Trajectory const* trajectory() const { return m_trajectory ? &*m_trajectory : nullptr; }
     std::string const& name() const { return m_name; }

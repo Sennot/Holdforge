@@ -77,8 +77,23 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     effective["manual_duals"] = out.manualDual;
     if (autoDual) for (auto& g : out.plan.gates) g.p2 = 1;
     if (calibration) {
-        if (!calibration->completed || calibration->twoPlayer != cfg.twoPlayer || calibration->macroHash != replay.fingerprint || calibration->levelHash != hash)
-            throw Error("TRACE_LEVEL", "Recorded positions need the unmodified original level. Remove the old hold triggers first. The level must match the recorded run.");
+        auto identity = matjson::Value::object();
+        identity["complete"] = calibration->completed;
+        identity["recorded_level_hash"] = fmt::format("{:016x}", calibration->levelHash);
+        identity["current_level_hash"] = fmt::format("{:016x}", hash);
+        identity["recorded_macro_hash"] = fmt::format("{:016x}", calibration->macroHash);
+        identity["current_macro_hash"] = fmt::format("{:016x}", replay.fingerprint);
+        identity["recorded_two_player"] = calibration->twoPlayer;
+        identity["current_two_player"] = cfg.twoPlayer;
+        debug.set("trace_identity", identity);
+        if (!calibration->completed)
+            throw Error("TRACE_INCOMPLETE", "Recording did not complete. Press Record and finish a clean run");
+        if (calibration->macroHash != replay.fingerprint)
+            throw Error("TRACE_MACRO", "Recording belongs to another macro. Import the intended .slc on this level");
+        if (calibration->twoPlayer != cfg.twoPlayer)
+            throw Error("TRACE_MODE", "Recording and current Two Player Mode differ. Re-import the macro and record this mode");
+        if (calibration->levelHash != hash)
+            throw Error("TRACE_LEVEL", "Recording and current level data differ. Re-import the macro to select the matching recording, or Record again. If the level is untouched, Export logs for diagnosis");
         if (cfg.offsetMs != 0 || mod->getSettingValue<double>("x-offset") != 0)
             throw Error("TRACE_OFFSET", "Set Timing offset and Position offset to zero for recorded positions");
         // Only the last generic editor-map warning is replaced. Preserve

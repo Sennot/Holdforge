@@ -50,11 +50,18 @@ bool HoldPopup::init(LevelEditorLayer* editor) {
     button(m_buttonMenu, this, menu_selector(HoldPopup::onSettings), "Settings", 85, 31, 124, {40, 50, 74});
     button(m_buttonMenu, this, menu_selector(HoldPopup::onHelp), "Help", 355, 31, 124, {40, 50, 74});
     auto& workflow = Workflow::get();
-    if (auto replay = workflow.replay()) {
+    auto session = workflow.editorState(editor);
+    if (auto replay = workflow.replay(); replay &&
+        (session == Workflow::EditorState::Source || session == Workflow::EditorState::Generated)) {
+        m_applied = session == Workflow::EditorState::Generated;
         m_replay = *replay; m_file->setString(workflow.name().c_str());
         m_file->limitLabelWidth(380, .43f, .15f);
         m_stats->setString(workflow.trajectory() ? "Recorded trajectory available" : "Recording required");
         status(workflow.status());
+    } else if (session == Workflow::EditorState::Changed) {
+        m_stats->setString("Previous session belongs to a different level snapshot");
+        m_stats->limitLabelWidth(380, .31f, .17f);
+        status("Import a macro for this level");
     }
     drawTimeline(); return true;
 }
@@ -143,12 +150,14 @@ void HoldPopup::onCreate(CCObject*) {
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onRecord(CCObject*) {
+    if (!m_replay) { status("Import a macro for this level first", true); return; }
     try {
         Workflow::get().armRecord(m_editor); status(Workflow::get().status());
         FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Exit</c>, then the normal <cy>Play</c> button on this original level. Keep GD open. Play the SAME macro in Silicate from the beginning, without practice/StartPos or noclip.\nComplete the level, return to HF, then Analyze. Recording is saved automatically.", "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onVerify(CCObject*) {
+    if (!m_replay) { status("Import a macro for this level first", true); return; }
     try {
         Workflow::get().armVerify(m_editor); status(Workflow::get().status());
         FLAlertLayer::create("Verify native hold", "Turn macro playback and noclip OFF. Close HF, Save and Exit, then normal Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes. Return to HF for the result and Export logs.", "OK")->show();

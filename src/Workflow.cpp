@@ -30,6 +30,20 @@ matjson::Value sampleJson(Sample const& s) {
     j["disabled1"] = s.disabled1; j["disabled2"] = s.disabled2; return j;
 }
 Workflow& Workflow::get() { static Workflow w; return w; }
+Workflow::EditorState Workflow::editorState(LevelEditorLayer* editor) const {
+    if (!m_replay) return EditorState::Unselected;
+    if (!editor || !editor->m_levelSettings || editor->m_levelSettings->m_twoPlayerMode != m_twoPlayer)
+        return EditorState::Changed;
+    auto current = std::string(editor->getLevelString());
+    if (!m_holdSource.empty() && current == m_holdSource) return EditorState::Generated;
+    if (current == m_source) return EditorState::Source;
+    auto j = matjson::Value::object(); j["source_hash"] = fmt::format("{:016x}", fingerprint(m_source));
+    j["current_hash"] = fmt::format("{:016x}", fingerprint(current));
+    j["source_bytes"] = m_source.size(); j["current_bytes"] = current.size();
+    j["first_different_byte"] = static_cast<size_t>(std::mismatch(m_source.begin(), m_source.end(), current.begin(), current.end()).first-m_source.begin());
+    Diagnostics::get().set("editor_session_changed", j);
+    return EditorState::Changed;
+}
 std::filesystem::path Workflow::cachePath() const {
     return Mod::get()->getSaveDir() / "trajectories" / fmt::format("{:016x}-{:016x}-{}.hftrace3", m_replay->fingerprint, fingerprint(m_source), m_twoPlayer ? 2 : 1);
 }
