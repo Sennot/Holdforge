@@ -167,10 +167,10 @@ class $modify(HFPlayTrace, PlayLayer) {
         if (logging) {
             auto row = state(this); row["player2"] = player == m_player2;
             if (object) { row["object_id"] = object->m_objectID; row["object_x"] = object->getPositionX(); row["object_y"] = object->getPositionY(); }
-            hf::Diagnostics::get().event("death_attempt", row);
+            hf::Diagnostics::get().event("damage_callback", row);
         }
         PlayLayer::destroyPlayer(player, object);
-        if (logging) { auto row = state(this); row["dead_after"] = player && player->m_isDead; hf::Diagnostics::get().event("death_result", row); }
+        if (logging) { auto row = state(this); row["dead_after"] = player && player->m_isDead; hf::Diagnostics::get().event("damage_result", row); }
     }
     void levelComplete() {
         hf::Workflow::get().complete(this);

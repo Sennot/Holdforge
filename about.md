@@ -1,25 +1,17 @@
 # HoldForge
 
-Import Silicate `.slc` v2/v3, record a complete replay, create native Options
-and experimental invisible dual path helpers.
+Silicate `.slc` v2/v3 to native hold objects for GD 2.2081.
 
-**Import → Record → Analyze → Create → Verify.** Use Save and Exit, then
-normal Play; Save and Play is optional. Matching HFTRACE3 recordings from 0.2.1 remain usable.
+**0.2.2-beta.4:** compatibility checks now give warnings. Damage callbacks do
+not identify noclip or cancel Record/Verify. Partial recordings are retained;
+missing positions use approximate editor timeline mapping. Verify differences
+are reported without interrupting the run or blocking creation.
 
-The invisible auto generator accepts all eight forms in ordinary dual. It uses
-hidden native touch portals, preserving X and approximating the recorded Y path.
-This is an experimental path conversion, not a guarantee of all-mode correctness.
-Overlapping P1/P2 paths and insufficient group IDs stop generation.
+Ordinary dual uses a shared input. Invisible dual auto is an approximate native
+portal path; Manual dual sections lets the author build those sections by hand.
+Two Player Mode keeps independent input streams. No runtime input injection.
 
-Includes backups, one Undo operation and detailed mismatch reports. Gameplay
-hooks only observe. Test the saved result with HoldForge disabled before publishing.
-
-0.2.2 corrects the blue entrance ID to 2902 (2064 is the orange exit), adds
-Manual dual sections for hand-built invisible auto, and preserves startup
-checkpoints independently of the event limit. Manual batches use normal Play
-for testing after edits. The reported Spout / More Icons crash is unconfirmed.
-
-Beta.3 keeps the selected macro when returning from Record to the same level.
-Equivalent save formatting no longer invalidates the trajectory. Real content
-changes still require a new recording; Export logs identifies the first changed
-property. Windows/gameplay validation remains required.
+Import → optional Record → Analyze → Create → optional Verify.
+Use Save and Exit, then normal Play; Save and Play is not required.
+Export logs includes warnings and runtime observations. In-game validation is
+still needed; core tests do not validate Geometry Dash physics.

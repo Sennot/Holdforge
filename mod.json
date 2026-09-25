@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.2.2-beta.3",
+  "version": "v0.2.2-beta.4",
   "developer": "HoldForge",
-  "description": "Silicate to native hold: recorded gates, corrected invisible dual portals and manual dual editing.",
+  "description": "Silicate to native hold: warning-only compatibility checks, partial recordings and optional verification.",
   "tags": [
     "editor",
     "utility"
@@ -17,25 +17,13 @@
       "type": "title",
       "name": "Conversion"
     },
-    "require-recording": {
-      "type": "bool",
-      "name": "Require recorded trajectory",
-      "default": true,
-      "description": "Record a complete matching Silicate replay before generating. Disabling this uses the approximate editor timeline."
-    },
-    "strict-240": {
-      "type": "bool",
-      "name": "Strict 240 TPS",
-      "default": true,
-      "description": "Reject non-240 TPS macros. Turning this off converts time, but does not reproduce custom-TPS physics."
-    },
     "offset-ms": {
       "type": "float",
       "name": "Timing offset (ms)",
       "default": 0,
       "min": -1000,
       "max": 1000,
-      "description": "Approximate timeline mode only. Positive = later; recorded trajectories require zero offsets."
+      "description": "Positive = later. Nonzero time offset uses approximate editor timeline positions, including when a recording is loaded."
     },
     "x-offset": {
       "type": "float",
@@ -43,7 +31,7 @@
       "default": 0,
       "min": -300,
       "max": 300,
-      "description": "Approximate timeline mode only. Moves all generated triggers; recorded trajectories require zero offsets."
+      "description": "Move generated Options by this X distance. Recorded paths give a warning when an offset is applied."
     },
     "trigger-y": {
       "type": "float",
@@ -61,23 +49,23 @@
     },
     "max-triggers": {
       "type": "int",
-      "name": "Maximum generated objects",
+      "name": "Object count warning threshold",
       "default": 20000,
       "min": 10,
       "max": 50000,
-      "description": "Combined limit for Options, portals, target markers and toggles. Invisible dual uses about 960 objects per second."
+      "description": "Warn when the generated object count exceeds this number. Does not cancel creation. Native group ID capacity still applies."
     },
     "backup-level": {
       "type": "bool",
       "name": "Backup before import",
       "default": true,
-      "description": "Save the raw editor level string before inserting a batch. Import stops if backup cannot be written."
+      "description": "Save the raw level string before inserting a batch. Backup I/O errors give a warning; the batch still has one Undo."
     },
     "manual-duals": {
       "type": "bool",
       "name": "Manual dual sections",
       "default": false,
-      "description": "Ordinary dual only: enable both controls at entry, skip macro Options inside, restore macro state at exit. Build your invisible blocks/pads manually. Requires a full recording; overrides Invisible dual auto and Shared P1 only. Verify is unavailable for this batch; use normal Play after editing."
+      "description": "Ordinary dual: enable both controls at entry, skip macro gates inside, restore state at exit. Build dual objects yourself. Uses available recorded boundaries; if unavailable, creates Options with a warning. Overrides Invisible dual auto."
     },
     "experimental": {
       "type": "title",
@@ -87,25 +75,13 @@
       "type": "bool",
       "name": "Invisible dual auto (beta)",
       "default": true,
-      "description": "Ordinary dual: generate hidden native teleport portals along a NEW complete recorded path, for every form. Approximate movement; no P2 clicks. Refuses overlap with P1. Verify before publishing. No effect in Two Player Mode."
+      "description": "Generate hidden native portals along available recorded P2 positions. Partial recordings and P1 overlap give warnings. If helpers cannot be built, Options are still created and the omission is reported. No effect in Two Player Mode."
     },
     "shared-p1-only": {
       "type": "bool",
       "name": "Diagnostic: shared P1 gates only",
       "default": false,
       "description": "Native alternative for ordinary dual: leave property 199 unchanged. Not a confirmed dual fix. Regenerate and Verify to compare. Two Player Mode keeps independent gates."
-    },
-    "unsafe-timeline": {
-      "type": "bool",
-      "name": "Experimental timeline",
-      "default": false,
-      "description": "Allow an attempt on levels with dash, teleport, timewarp or direction mechanics. This does not add support for them; recording rejects reversed X and incompatible clocks."
-    },
-    "allow-existing-controls": {
-      "type": "bool",
-      "name": "Allow existing control triggers",
-      "default": false,
-      "description": "Existing Options Triggers may override the generated batch. Normally imports stop when control triggers already exist."
     },
     "debug": {
       "type": "title",
@@ -133,7 +109,7 @@
       "type": "bool",
       "name": "Trace playtest inputs and triggers",
       "default": false,
-      "description": "Record Options before/after, dual transitions, physical input, jump buffers, modes, level time, normal-play death attempts/results, resets and editor damage. Noclip or other hooks can suppress deaths before this hook sees them. Adds logging overhead."
+      "description": "Record input, triggers, dual transitions and damage callbacks/results. A callback does not prove death or detect noclip. Adds logging overhead."
     },
     "debug-objects": {
       "type": "bool",

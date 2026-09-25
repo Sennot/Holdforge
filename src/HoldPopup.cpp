@@ -51,14 +51,14 @@ bool HoldPopup::init(LevelEditorLayer* editor) {
     button(m_buttonMenu, this, menu_selector(HoldPopup::onHelp), "Help", 355, 31, 124, {40, 50, 74});
     auto& workflow = Workflow::get();
     auto session = workflow.editorState(editor);
-    if (auto replay = workflow.replay(); replay &&
-        session != Workflow::EditorState::Other && session != Workflow::EditorState::Unselected) {
+    if (auto replay = workflow.replay()) {
         m_applied = session == Workflow::EditorState::Generated;
         m_replay = *replay; m_file->setString(workflow.name().c_str());
         m_file->limitLabelWidth(380, .43f, .15f);
         m_stats->setString(session == Workflow::EditorState::Changed ? "Macro kept - level data needs checking" :
-            workflow.trajectory() ? "Recorded trajectory available" : "Recording required");
+            workflow.trajectory() ? "Recorded trajectory available" : "Recording optional - Analyze is available");
         status(workflow.status());
+        if (session == Workflow::EditorState::Other) status("Warning: selected macro/recording is from another level");
     } else if (session == Workflow::EditorState::Other) {
         m_stats->setString("Previous session belongs to a different level snapshot");
         m_stats->limitLabelWidth(380, .31f, .17f);
@@ -112,17 +112,12 @@ void HoldPopup::onImport(CCObject*) {
                 }
                 m_file->setString(utils::string::pathToString(path->filename()).c_str());
                 m_file->limitLabelWidth(380, .43f, .15f);
-                if (Workflow::get().trajectory()) onAnalyze(nullptr);
-                else {
-                    m_stats->setString(fmt::format("{} inputs / {} TPS", replay.actions.size(), replay.tps).c_str());
-                    status("Macro loaded - press Record");
-                }
+                onAnalyze(nullptr);
             } catch (std::exception const& e) { failure(e); }
         });
 }
 void HoldPopup::onAnalyze(CCObject*) {
     if (!m_replay) { status("Import a macro first", true); return; }
-    if (m_applied) { status("Batch already created. Close and use Undo to retry.", true); return; }
     try {
         m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
         auto const& p = m_prepared->plan;
@@ -134,7 +129,7 @@ void HoldPopup::onAnalyze(CCObject*) {
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onCreate(CCObject*) {
-    if (!m_replay || !m_prepared || m_applied) return;
+    if (!m_replay || !m_prepared) return;
     try {
         // Re-evaluate the current settings and level immediately before mutation.
         m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
@@ -143,7 +138,8 @@ void HoldPopup::onCreate(CCObject*) {
         m_create->setEnabled(false); m_create->setOpacity(110);
         status(fmt::format("Created {} objects - one Undo restores the batch", count));
         std::string notes;
-        for (auto const& w : m_prepared->plan.warnings) notes += "\n" + w;
+        size_t shown = 0;
+        for (auto const& w : m_prepared->plan.warnings) { if (shown++ == 5) { notes += "\nMore warnings: Export logs."; break; } notes += "\n" + w; }
         auto next = m_prepared->manualDual
             ? "Build your invisible blocks/pads in dual sections. Test using normal Play with macro OFF, holding input."
             : "Press Verify, turn macro playback OFF, Save and Exit, then normal Play holding input.";
@@ -154,14 +150,14 @@ void HoldPopup::onRecord(CCObject*) {
     if (!m_replay) { status("Import a macro for this level first", true); return; }
     try {
         Workflow::get().armRecord(m_editor); status(Workflow::get().status());
-        FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Exit</c>, then the normal <cy>Play</c> button on this original level. Keep GD open. Play the SAME macro in Silicate from the beginning, without practice/StartPos or noclip.\nComplete the level, return to HF, then Analyze. Recording is saved automatically.", "OK")->show();
+        FLAlertLayer::create("Record trajectory", "Close HF. Use <cy>Save and Exit</c>, then the normal <cy>Play</c> button on this original level. Keep GD open. Play the selected macro in Silicate. A full-start run gives the best reference. Warnings do not stop recording.\nReturn to HF, then Analyze. Full and partial recordings are saved automatically.", "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onVerify(CCObject*) {
     if (!m_replay) { status("Import a macro for this level first", true); return; }
     try {
         Workflow::get().armVerify(m_editor); status(Workflow::get().status());
-        FLAlertLayer::create("Verify native hold", "Turn macro playback and noclip OFF. Close HF, Save and Exit, then normal Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes. Return to HF for the result and Export logs.", "OK")->show();
+        FLAlertLayer::create("Verify native hold", "For a hold test, turn macro playback OFF. Close HF, Save and Exit, then normal Play from the beginning, hold P1 continuously (both inputs in 2-player).\nHoldForge only observes; mismatches give warnings and Verify continues. Return to HF for the result and Export logs.", "OK")->show();
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
@@ -174,13 +170,14 @@ void HoldPopup::onExport(CCObject*) {
     } catch (std::exception const& e) { failure(e); }
 }
 void HoldPopup::onHelp(CCObject*) {
-    std::string message = "Use a <cy>copy of your level</c> and a full-start, clean macro.\n"
+    std::string message = "Use a <cy>copy of your level</c> and your selected macro.\n"
         "Press = allow control (-1); release = block (1).\n"
         "Dual shares P1. Two Player Mode uses independent P1/P2 streams.\n"
         "Record saves every physics step; Create writes native level objects.\n"
         "Verify compares native hold to the recording. No runtime fixes.\n"
         "Invisible dual auto uses hidden portals along the recorded P2 path. Beta: test without HoldForge.\n"
         "Manual dual sections leaves dual construction to you; test your edits with normal Play.\n"
+        "Compatibility checks give warnings and never cancel the run.\n"
         "Settings: timing offset, editor layer, debug traces.\n"
         "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
     if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;

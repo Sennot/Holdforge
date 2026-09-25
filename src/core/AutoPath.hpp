@@ -24,16 +24,19 @@ struct AutoPathConfig {
     // Native portal bounds after applying scale .5, checked by the editor.
     double halfWidth = 15, halfHeight = 25;
     double clearance = 6;
+    bool warningsOnly = false;
 };
 struct AutoPath {
     std::vector<AutoObject> objects;
     std::vector<AutoAnchor> anchors;
     std::array<size_t, 8> modes{};
     size_t segments = 0;
+    std::vector<std::string> warnings;
 };
 // Reserve all positive integer components of serialized VALUES, not just group
 // membership. This also protects unused targets, remaps and sequence entries.
 // Conservative false positives cost capacity, but never reuse a referenced ID.
 std::array<bool, 10000> reservedIDs(std::string_view level);
 AutoPath makeAutoPath(Trajectory const& trace, std::string_view original, AutoPathConfig const& config = {});
+std::vector<PositionedGate> autoControlGates(std::vector<PositionedGate> const& base, AutoPath const& path);
 }

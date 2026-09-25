@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 namespace hf {
 Plan plan(Replay const& replay, PlanConfig const& config) {
@@ -9,6 +10,11 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         throw Error("PLAN_OFFSET", "Offset must be finite and within +/-1000 ms");
     if (replay.actions.empty()) throw Error("PLAN_EMPTY", "Macro contains no actions");
     Plan out;
+    auto warn = [&](std::string const& code, std::string const& message) {
+        if (!config.warningsOnly) throw Error(code, message);
+        if (std::find(out.warnings.begin(), out.warnings.end(), message) == out.warnings.end())
+            out.warnings.push_back(message);
+    };
     double tps = replay.tps, seconds = 0;
     uint64_t previousFrame = 0;
     std::array<bool, 2> down{false, false};
@@ -18,12 +24,12 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         if (a.kind == Kind::Jump) streams[a.p2].emplace_back(a.frame, a.down);
     }
     if (!config.twoPlayer && !streams[1].empty() && streams[0] != streams[1])
-        throw Error("PLAN_P2_SHARED", "Independent P2 stream requires Two Player Mode in level settings");
+        warn("PLAN_P2_SHARED", "Independent P2 stream in ordinary dual: only the P1 stream is used.");
     if (streams[0].empty() && streams[1].empty()) throw Error("PLAN_NO_JUMP", "Macro contains no jump input");
     auto checkTps = [&](double value) {
         if (!std::isfinite(value) || value < 1 || value > 1000000) throw Error("PLAN_TPS", "Invalid TPS");
         if (std::abs(value - 240) > 0.00001) {
-            if (config.strict240) throw Error("PLAN_TPS", "Macro is not 240 TPS. Disable Strict 240 TPS only for an approximate conversion.");
+            if (config.strict240) warn("PLAN_TPS", "Non-240 TPS: timestamps are converted; physics equivalence is not guaranteed.");
             if (out.warnings.empty()) out.warnings.push_back("Non-240 TPS: timestamps are converted, but physics equivalence is not guaranteed.");
         }
     };
@@ -36,18 +42,20 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
         if (!std::isfinite(seconds) || seconds > 3600) throw Error("PLAN_DURATION", "Macro exceeds one hour");
         if (a.kind == Kind::TPS) { checkTps(a.tps); tps = a.tps; continue; }
         if (a.kind == Kind::Skip) continue;
-        if (a.kind == Kind::Left || a.kind == Kind::Right)
-            throw Error("PLAN_PLATFORMER", "Left/right inputs cannot be represented by a single hold gate");
-        if (a.kind != Kind::Jump)
-            throw Error("PLAN_SPECIAL", "Restart, death or bugpoint found. Export a single clean attempt.");
+        if (a.kind == Kind::Left || a.kind == Kind::Right) {
+            warn("PLAN_PLATFORMER", "Left/right inputs are omitted; the generated gates control jump only."); continue;
+        }
+        if (a.kind != Kind::Jump) {
+            warn("PLAN_SPECIAL", "Restart/death/bugpoint markers are ignored; check the resulting timeline."); continue;
+        }
         if (!config.twoPlayer && a.p2) continue; // Verified identical shared stream above.
         a.p2 ? ++out.p2Events : ++out.p1Events;
         size_t p = a.p2 ? 1 : 0;
         if (down[p] == a.down) { ++out.duplicates; continue; }
-        if (lastChange[p] == a.frame) throw Error("PLAN_SAME_FRAME", "Swift at frame " + std::to_string(a.frame) + " (" + std::to_string(seconds) + "s): same-frame press/release cannot be represented reliably by Options Triggers");
+        if (lastChange[p] == a.frame) warn("PLAN_SAME_FRAME", "Swift clicks: same-frame edges are merged to their final state; the pulse is not reproduced.");
         lastChange[p] = a.frame; down[p] = a.down;
         double time = seconds + config.offsetMs / 1000;
-        if (time < 0) throw Error("PLAN_NEGATIVE", "Offset moves an input before level start");
+        if (time < 0) { warn("PLAN_NEGATIVE", "Inputs shifted before level start are clamped to time zero."); time = 0; }
         Gate gate{a.frame, time, 0, 0};
         int state = a.down ? -1 : 1;
         if (p == 0) { gate.p1 = state; if (!config.twoPlayer && !config.sharedP1Only) gate.p2 = state; }
@@ -57,7 +65,7 @@ Plan plan(Replay const& replay, PlanConfig const& config) {
             if (gate.p1) prev.p1 = gate.p1;
             if (gate.p2) prev.p2 = gate.p2;
         } else out.gates.push_back(gate);
-        if (out.gates.size() > config.maxTriggers) throw Error("PLAN_LIMIT", "Generated trigger count exceeds configured limit");
+        if (out.gates.size() > config.maxTriggers) warn("PLAN_LIMIT", "Generated object count exceeds the configured warning threshold.");
     }
     out.duration = out.gates.back().seconds;
     if (config.twoPlayer && streams[1].empty()) out.warnings.push_back("No P2 inputs: P2 controls stay blocked throughout this conversion.");

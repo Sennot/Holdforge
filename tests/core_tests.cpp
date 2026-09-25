@@ -236,6 +236,9 @@ void manualDualTests() {
     error([&] { hf::manualDualGates(gates, two); }, "MANUAL_2P");
     auto partial = t; partial.completed = false;
     error([&] { hf::manualDualGates(gates, partial); }, "MANUAL_RECORD");
+    partial.steps.resize(16); partial.endTime = partial.steps.back().time;
+    auto kept = hf::manualDualGates(gates, partial, true);
+    check(kept.gates.back().x == gates.back().x && kept.gates.back().gate.p1 == 1, "partial dual capture does not delete unobserved tail gates");
     auto broken = gates; broken[2].x = broken[1].x;
     error([&] { hf::manualDualGates(broken, t); }, "MANUAL_GATES");
     auto badTrace = t; badTrace.steps[10].time = badTrace.steps[9].time;
@@ -290,8 +293,91 @@ void levelIdentityTests() {
     check(hf::readTrajectory(restored, r, hf::levelFingerprint(reopened), false).completed, "complete recording reloads using equivalent saved level");
     error([&] { std::istringstream wrong(saved.str()); hf::readTrajectory(wrong, r, hf::levelFingerprint(modified), false); }, "CAPTURE_IDENTITY");
 }
+void advisoryTests() {
+    hf::Replay r; r.fingerprint = 42; r.tps = 120;
+    r.actions = {{2, hf::Kind::Jump, true, false}, {2, hf::Kind::Jump, false, false},
+                 {3, hf::Kind::Left, true, false}, {4, hf::Kind::Death, false, false},
+                 {6, hf::Kind::Jump, true, true}, {8, hf::Kind::Jump, true, false},
+                 {10, hf::Kind::Jump, false, false}};
+    hf::PlanConfig cfg; cfg.warningsOnly = true; cfg.maxTriggers = 1; cfg.offsetMs = -50;
+    auto p = hf::plan(r, cfg);
+    check(p.warnings.size() >= 6, "advisory planner reports Swift/TPS/markers/directions/count/offset");
+    check(p.gates.size() == 3 && p.gates[0].p1 == 1 && p.gates.back().p1 == 1,
+          "Swift ends at final state; unsupported events do not abort later gates");
+    for (auto const& g : p.gates) check(g.seconds >= 0 && g.p1 == g.p2, "advisory ordinary dual uses P1 stream");
+
+    r.tps = 240; r.actions = {{2, hf::Kind::Jump, true, false}, {4, hf::Kind::Jump, false, false},
+                             {8, hf::Kind::Jump, true, false}, {10, hf::Kind::Jump, false, false}};
+    hf::Recorder recorder(r, 9, false, true);
+    hf::Sample sample; sample.x = 10;
+    for (int frame = 0; frame <= 10; ++frame) {
+        if (frame == 3 || frame == 4) continue; // Missing release + physics gap.
+        sample.time = frame/240.0; sample.x = 10+frame;
+        if (frame == 6) sample.x = 9; // Reverse is advisory.
+        recorder.step(sample);
+        if (frame == 2) check(recorder.input(true, false, sample), "record first edge");
+        if (frame == 5) recorder.input(false, false, sample); // Too early for next press.
+        if (frame == 10) recorder.input(false, false, sample);
+        recorder.stepEnd(sample);
+    }
+    auto partial = recorder.partial();
+    check(!partial.completed && partial.advisory && !partial.inputs.empty(), "interrupted recording keeps usable edges");
+    check(!partial.warnings.empty(), "recording mismatches stay warnings");
+    std::ostringstream bytes; hf::writeTrajectory(bytes, partial);
+    check(bytes.str().starts_with("HFTRACE4 "), "advisory trace uses distinct cache format");
+    std::istringstream input(bytes.str()); auto loaded = hf::readTrajectory(input, r, 9, false);
+    check(!loaded.completed && loaded.inputs.size() == partial.inputs.size() && loaded.steps.size() == partial.steps.size(), "partial recording cache roundtrip");
+    check(loaded.warnings == partial.warnings, "warnings survive cache reload");
+    auto finished = recorder.finish(sample.time);
+    check(finished.completed && !finished.warnings.empty(), "completion with missing edges is retained with warnings");
+    error([&] { std::istringstream bad(bytes.str()+"bad"); hf::readTrajectory(bad, r, 9, false); }, "CAPTURE_CACHE");
+    auto broken = partial; broken.inputs[0].triggerX = std::numeric_limits<double>::infinity();
+    std::ostringstream invalid; hf::writeTrajectory(invalid, broken);
+    error([&] { std::istringstream bad(invalid.str()); hf::readTrajectory(bad, r, 9, false); }, "CAPTURE_CACHE");
+
+    hf::Recorder late(r, 9, false, true); sample.time = 1; sample.x = 50;
+    late.step(sample); late.stepEnd(sample);
+    auto empty = late.finish(1);
+    check(empty.completed && empty.inputs.empty() && !empty.warnings.empty(), "late start without edges remains an advisory reference");
+    std::ostringstream emptyBytes; hf::writeTrajectory(emptyBytes, empty);
+    std::istringstream emptyIn(emptyBytes.str());
+    check(hf::readTrajectory(emptyIn, r, 9, false).inputs.empty(), "zero-edge reference cache supported");
+
+    r.tps = 120; r.actions = {{4, hf::Kind::Jump, true, false}, {8, hf::Kind::Jump, false, false}};
+    hf::Recorder customTps(r, 9, false, true);
+    for (int f=0; f<=16; ++f) {
+        sample.time = f/240.0; sample.x = 10+f; customTps.step(sample);
+        if (f == 8 || f == 16) check(customTps.input(f == 8, false, sample), "non-240 event uses macro timestamp");
+        customTps.stepEnd(sample);
+    }
+    auto custom = customTps.finish(16/240.0);
+    check(custom.inputs.size() == 2 && custom.inputs[0].frame == 4 && custom.inputs[0].sample.time == 8/240.0, "non-240 capture maps original frame to observed time");
+    sample.time = 0; sample.x = 10; customTps.step(sample); customTps.stepEnd(sample);
+    check(customTps.partial().inputs.empty() && customTps.partial().steps.size() == 1, "clock reset begins fresh data without aborting recorder");
+
+    auto t = autoTrace(0, 0); t.completed = false;
+    for (auto& step : t.steps) step.p2y = step.y; // Known P1 overlap, explicitly permitted with warning.
+    hf::AutoPathConfig ac; ac.warningsOnly = true; ac.maxObjects = 1;
+    auto helpers = hf::makeAutoPath(t, "", ac);
+    check(!helpers.anchors.empty() && helpers.warnings.size() >= 3, "partial/overlap/count warnings do not stop helper generation");
+    t.steps[10].x = t.steps[9].x;
+    auto skipped = hf::makeAutoPath(t, "", ac);
+    check(!skipped.anchors.empty() && skipped.anchors.size() < helpers.anchors.size(), "unmappable intervals omitted while later helpers continue");
+    std::vector<hf::PositionedGate> base = {{{0,0,1,1},0}, {{2,.02,-1,-1},102}, {{60,.25,1,1},190}};
+    auto controlled = hf::autoControlGates(base, helpers);
+    check(controlled.front().gate.p2 == 1 && controlled.back().gate.p2 == 1, "source state outside auto retained");
+    auto endX = static_cast<float>(helpers.anchors.back().offX);
+    bool restored = false;
+    for (auto const& g : controlled) if (g.x == endX) restored = g.gate.p2 == -1;
+    check(restored, "P2 re-enabled after partial helper coverage while macro holds");
+    auto gapGates = hf::autoControlGates(base, skipped);
+    bool gapRestored = false;
+    for (auto const& g : gapGates) if (g.x == static_cast<float>(hf::crossingPosition(t.steps[8].x, t.steps[9].x))) gapRestored = g.gate.p2 == -1;
+    check(gapRestored, "P2 is restored in an omitted helper interval");
+}
 int main(int argc, char** argv) {
  try {
+    advisoryTests();
     trajectoryTests();
     autoTests();
     manualDualTests();

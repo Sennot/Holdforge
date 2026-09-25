@@ -1,3 +1,5 @@
+> Исторические заметки до beta.4. Описанные здесь запреты теперь предупреждения; актуальное поведение см. README.md.
+
 # Native dual path implementation notes (0.2.2-beta.1)
 
 This version implements an experimental generator, not a proof that ordinary

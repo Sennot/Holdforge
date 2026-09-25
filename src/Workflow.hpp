@@ -34,7 +34,10 @@ private:
     std::filesystem::path cachePath() const;
     bool target(PlayLayer* layer) const;
     bool sameSessionLevel(GJGameLevel* level) const;
-    void fail(std::string const& code, std::string const& message);
+    std::unordered_map<std::string, std::string> m_warnings;
+    void warn(std::string const& code, std::string const& message);
+    void saveRecording(Trajectory result);
+    void recorderWarnings();
 public:
     static Workflow& get();
     EditorState editorState(LevelEditorLayer* editor) const;

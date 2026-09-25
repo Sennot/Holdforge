@@ -4,9 +4,9 @@
 #include <limits>
 
 namespace hf {
-ManualDualResult manualDualGates(std::vector<PositionedGate> const& gates, Trajectory const& trace) {
+ManualDualResult manualDualGates(std::vector<PositionedGate> const& gates, Trajectory const& trace, bool allowPartial) {
     if (trace.twoPlayer) throw Error("MANUAL_2P", "Manual dual mode is only for ordinary dual");
-    if (!trace.completed || trace.steps.empty())
+    if ((!trace.completed && !allowPartial) || trace.steps.empty())
         throw Error("MANUAL_RECORD", "Record a complete trajectory to locate dual sections");
     for (size_t i = 0; i < gates.size(); ++i) {
         auto const& g = gates[i];
@@ -26,6 +26,12 @@ ManualDualResult manualDualGates(std::vector<PositionedGate> const& gates, Traje
             boundaries.push_back({i ? static_cast<float>(crossingPosition(trace.steps[i-1].x, s.x)) : 0.f, s.time, s.dual});
             dual = s.dual;
         }
+    }
+    // Do not erase unobserved tail gates when an interrupted capture ends in
+    // dual. Only the known interval is available for manual construction.
+    if (allowPartial && !trace.completed && dual) {
+        auto const& last = trace.steps.back();
+        boundaries.push_back({static_cast<float>(last.x), last.time, false});
     }
     ManualDualResult out;
     size_t edge = 0;

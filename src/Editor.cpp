@@ -15,10 +15,8 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     if (editor->m_playbackMode != PlaybackMode::Not || editor->m_playbackActive)
         throw Error("EDITOR_PLAYING", "Stop playtest and music playback first");
     auto settings = editor->m_levelSettings;
-    if (!settings || settings->m_platformerMode) throw Error("LEVEL_PLATFORMER", "This converter supports classic levels only");
+    if (!settings) throw Error("EDITOR_SETTINGS", "Editor settings unavailable");
     auto mod = Mod::get(); auto& debug = Diagnostics::get();
-    if (requireRecording && !calibration && mod->getSettingValue<bool>("require-recording"))
-        throw Error("RECORD_FIRST", "Record a complete replay with the Record button before generating");
     Prepared out;
     out.levelBefore = std::string(editor->getLevelString());
     auto info = matjson::Value::object();
@@ -37,21 +35,23 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         {1751, "Gravity dash orb"}, {2900, "Gameplay rotation"},
         {2901, "Gameplay offset"}, {1932, "Player Control"}
     };
-    bool unsafe = mod->getSettingValue<bool>("unsafe-timeline");
     std::vector<std::string> warnings;
+    auto warning = [&](std::string const& message) {
+        if (std::find(warnings.begin(), warnings.end(), message) == warnings.end()) warnings.push_back(message);
+    };
+    if (settings->m_platformerMode) warning("Platformer: only jump gates are generated; directional input is omitted.");
+    if (requireRecording && !calibration) warning("No recording: using approximate editor timeline positions.");
     bool containsDual = settings->m_startDual;
-    if (settings->m_rotateGameplay && !unsafe) throw Error("LEVEL_ROTATE", "Rotated gameplay needs a recorded trajectory; timeline conversion is disabled");
+    if (settings->m_rotateGameplay) warning("Rotated gameplay: generated positions may need manual adjustment.");
     for (auto obj : CCArrayExt<GameObject*>(editor->m_objects)) {
         containsDual |= obj->m_objectID == 286;
         if (auto options = typeinfo_cast<GameOptionsTrigger*>(obj)) {
             if ((options->m_disableP1Controls != GameOptionsSetting::Disabled ||
-                 options->m_disableP2Controls != GameOptionsSetting::Disabled) &&
-                 !mod->getSettingValue<bool>("allow-existing-controls"))
-                throw Error("LEVEL_CONTROL_CONFLICT", "Existing control Options Triggers found. Undo the previous import or resolve the conflict first.");
+                 options->m_disableP2Controls != GameOptionsSetting::Disabled))
+                warning("Existing control Options may override generated gates; creation is allowed.");
         }
         auto it = risks.find(obj->m_objectID);
         if (it != risks.end()) {
-            if (!unsafe) throw Error("LEVEL_TIMELINE_RISK", it->second + " found. Static timeline may be inaccurate; see Experimental timeline setting.");
             auto warning = it->second + " present: generated timing requires manual validation.";
             if (std::find(warnings.begin(), warnings.end(), warning) == warnings.end()) warnings.push_back(warning);
         }
@@ -59,15 +59,15 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     bool manualRequested = !settings->m_twoPlayerMode && mod->getSettingValue<bool>("manual-duals");
     if (requireRecording && !calibration && containsDual && !settings->m_twoPlayerMode &&
         (mod->getSettingValue<bool>("dual-auto") || manualRequested))
-        throw Error("AUTO_RECORD", "Invisible auto / manual dual sections need a complete Record, even when Require recorded trajectory is disabled");
+        warning("Dual trajectory unavailable: creating Options only; dual sections need manual work.");
     PlanConfig cfg;
-    cfg.twoPlayer = settings->m_twoPlayerMode; cfg.strict240 = mod->getSettingValue<bool>("strict-240");
+    cfg.twoPlayer = settings->m_twoPlayerMode; cfg.warningsOnly = true;
     cfg.offsetMs = mod->getSettingValue<double>("offset-ms");
     cfg.maxTriggers = static_cast<size_t>(mod->getSettingValue<int64_t>("max-triggers"));
     cfg.sharedP1Only = !manualRequested && mod->getSettingValue<bool>("shared-p1-only");
     auto effective = matjson::Value::object();
-    effective["two_player"] = cfg.twoPlayer; effective["strict_240"] = cfg.strict240;
-    effective["offset_ms"] = cfg.offsetMs; effective["unsafe_timeline"] = unsafe;
+    effective["two_player"] = cfg.twoPlayer; effective["validation_policy"] = "warnings_only";
+    effective["offset_ms"] = cfg.offsetMs;
     effective["x_offset"] = mod->getSettingValue<double>("x-offset");
     effective["native_only"] = true;
     effective["shared_p1_only"] = cfg.sharedP1Only;
@@ -76,7 +76,6 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     bool autoDual = calibration && calibration->sawDual && !cfg.twoPlayer && !manualRequested && mod->getSettingValue<bool>("dual-auto");
     effective["invisible_dual_auto"] = autoDual;
     effective["manual_duals"] = out.manualDual;
-    if (autoDual) for (auto& g : out.plan.gates) g.p2 = 1;
     if (calibration) {
         auto identity = matjson::Value::object();
         identity["complete"] = calibration->completed;
@@ -88,15 +87,15 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         identity["current_two_player"] = cfg.twoPlayer;
         debug.set("trace_identity", identity);
         if (!calibration->completed)
-            throw Error("TRACE_INCOMPLETE", "Recording did not complete. Press Record and finish a clean run");
+            warning("Partial recording: missing inputs use approximate editor timeline positions.");
         if (calibration->macroHash != replay.fingerprint)
-            throw Error("TRACE_MACRO", "Recording belongs to another macro. Import the intended .slc on this level");
+            warning("Recording macro differs: using available recorded frames; inspect generated positions.");
         if (calibration->twoPlayer != cfg.twoPlayer)
-            throw Error("TRACE_MODE", "Recording and current Two Player Mode differ. Re-import the macro and record this mode");
+            warning("Recorded Two Player Mode differs from this level; inspect P1/P2 gates.");
         if (calibration->levelHash != hash)
-            throw Error("TRACE_LEVEL", "Recording and current level content differ. The macro and recording are kept. If you did not edit gameplay, Export logs; otherwise press Record for this version. No re-import is required on the same level");
+            warning("Level differs from the recording: recorded positions are used with a warning.");
         if (cfg.offsetMs != 0 || mod->getSettingValue<double>("x-offset") != 0)
-            throw Error("TRACE_OFFSET", "Set Timing offset and Position offset to zero for recorded positions");
+            warning("Offsets enabled: time offset uses editor timeline positions; X offset moves generated gates.");
         // Only the last generic editor-map warning is replaced. Preserve
         // meaningful planner warnings such as a missing independent P2 stream.
         if (!out.plan.warnings.empty()) out.plan.warnings.pop_back();
@@ -106,7 +105,6 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     }
     effective["mapping_source"] = calibration ? "recorded_inputs" : "editor_timeline";
     debug.set("effective_conversion", effective);
-    out.plan.warnings.insert(out.plan.warnings.end(), warnings.begin(), warnings.end());
     float y = static_cast<float>(mod->getSettingValue<double>("trigger-y"));
     float dx = static_cast<float>(mod->getSettingValue<double>("x-offset"));
     int layer = static_cast<int>(mod->getSettingValue<int64_t>("editor-layer"));
@@ -114,25 +112,30 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     // Use GD's portal-aware time map. Never estimate x with frame * a fixed speed.
     editor->dirtifyTriggers();
     for (auto const& gate : out.plan.gates) {
-        auto point = calibration ? CCPoint{gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}
-                                 : editor->posForTime(static_cast<float>(gate.seconds));
-        if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x <= previous)
-            throw Error("MAP_NON_MONOTONIC", "Timeline has overlapping/reversed X positions; use a trajectory-based conversion");
+        auto point = editor->posForTime(static_cast<float>(gate.seconds));
+        if (calibration && cfg.offsetMs == 0) {
+            try { point = {gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}; }
+            catch (Error const&) { warning("Some recorded frames are missing: those gates use approximate editor timeline positions."); }
+        }
+        if (!std::isfinite(point.x) || !std::isfinite(point.y))
+            throw Error("MAP_POSITION", "Game returned an invalid coordinate; cannot place this object");
+        if (point.x <= previous) warning("Overlapping/reversed X positions: gates are still generated; inspect their order.");
         float back = editor->timeForPos(point, 0, 0, false, 0);
-        if (!calibration && (!std::isfinite(back) || (!unsafe && std::abs(back - gate.seconds) > 1.0 / 240.0)))
-            throw Error("MAP_ROUNDTRIP", "Editor time/position roundtrip differs by more than one physics tick");
+        if (!calibration && (!std::isfinite(back) || std::abs(back-gate.seconds) > 1.0/240.0))
+            warning("Editor time/position roundtrip differs from macro timing; inspect generated positions.");
         previous = point.x;
         Placement p{gate, point.x + dx, y, {}};
         // max_digits10 preserves float coordinates through serialization.
         p.object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,{},199,{};", p.x, p.y, layer, gate.p1, gate.p2);
         out.placements.push_back(p);
     }
-    if (out.manualDual) {
+    auto basePlacements = out.placements;
+    if (out.manualDual) try {
         std::vector<PositionedGate> gates;
         for (auto const& p : out.placements) gates.push_back({p.gate, p.x});
-        auto result = manualDualGates(gates, *calibration);
+        auto result = manualDualGates(gates, *calibration, true);
         if (result.gates.size() > cfg.maxTriggers)
-            throw Error("PLAN_LIMIT", "Manual dual boundary gates exceed Maximum generated objects");
+            warning("Manual dual gates exceed the configured object warning threshold.");
         out.placements.clear();
         for (auto const& p : result.gates) {
             auto object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,{},199,{};", p.x, y, layer, p.gate.p1, p.gate.p2);
@@ -143,7 +146,11 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         debug.set("manual_duals", j);
         out.plan.warnings.push_back("Manual dual mode: both controls enabled at entry, no macro gates/helpers inside, macro state restored at exit. Build dual auto objects yourself. Test edited levels with normal Play.");
     }
-    if (autoDual) {
+    catch (Error const& e) {
+        out.placements = basePlacements; out.manualDual = false;
+        warning(std::string("Manual dual boundaries unavailable; Options kept: ") + e.what());
+    }
+    if (autoDual) try {
         // Detached native prototype: validate object ID/type and actual hitbox
         // before changing the editor. Never assume a Teleport trigger targets P2.
         debug.checkpoint("portal_probe_begin");
@@ -160,27 +167,23 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         prototype->setRScale(.5f);
         auto rect = prototype->getObjectRect();
         AutoPathConfig ac;
-        ac.layer = layer; ac.maxObjects = cfg.maxTriggers - out.placements.size();
+        ac.layer = layer; ac.warningsOnly = true; ac.maxObjects = cfg.maxTriggers > out.placements.size() ? cfg.maxTriggers - out.placements.size() : 0;
         ac.halfWidth = rect.size.width / 2; ac.halfHeight = rect.size.height / 2;
         probe["half_width"] = ac.halfWidth; probe["half_height"] = ac.halfHeight;
         debug.set("portal_probe", probe); debug.checkpoint("portal_probe_complete", probe);
         if (ac.halfWidth <= 0 || ac.halfHeight <= 0 || ac.halfWidth > 100 || ac.halfHeight > 100)
             throw Error("AUTO_PORTAL_BOUNDS", "Unexpected native portal hitbox; export logs");
         out.autoPath = makeAutoPath(*calibration, out.levelBefore, ac);
-        // A dual portal may reset the new icon's controls. Re-block it when
-        // each segment starts, even when there is no macro edge at entry.
-        double lastTime = -1;
+        for (auto const& w : out.autoPath.warnings) warning(w);
+        std::vector<PositionedGate> sourceGates;
+        for (auto const& p : basePlacements) sourceGates.push_back({p.gate, p.x});
+        auto autoGates = autoControlGates(sourceGates, out.autoPath);
+        out.placements.clear();
+        for (auto const& p : autoGates) {
+            auto object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,{},199,{};", p.x, y, layer, p.gate.p1, p.gate.p2);
+            out.placements.push_back({p.gate, p.x, y, std::move(object)});
+        }
         for (auto const& a : out.autoPath.anchors) {
-            if (lastTime < 0 || a.time-lastTime > 1.5/240.0) {
-                auto found = std::find_if(out.placements.begin(), out.placements.end(), [&](Placement const& p) { return std::abs(p.x-a.onX) < .01; });
-                if (found == out.placements.end()) {
-                    Gate gate{static_cast<uint64_t>(std::llround(std::max(0.0, a.time-calibration->clockOffset)*240)), a.time, 0, 1};
-                    Placement p{gate, static_cast<float>(a.onX), y, {}};
-                    p.object = fmt::format("1,2899,2,{:.9g},3,{:.9g},20,{},165,0,199,1;", p.x, p.y, layer);
-                    out.placements.push_back(p);
-                }
-            }
-            lastTime = a.time;
             if (mod->getSettingValue<bool>("debug-mapping")) {
                 auto j = matjson::Value::object(); j["step"] = a.step; j["time"] = a.time; j["mode"] = a.mode;
                 j["x"] = a.x; j["y"] = a.y; j["target_y"] = a.targetY; j["on_x"] = a.onX; j["off_x"] = a.offX;
@@ -190,13 +193,22 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         }
         std::sort(out.placements.begin(), out.placements.end(), [](Placement const& a, Placement const& b) { return a.x < b.x; });
         if (out.placements.size() + out.autoPath.objects.size() > cfg.maxTriggers)
-            throw Error("AUTO_OBJECT_LIMIT", "Options plus invisible helpers exceed Maximum generated objects");
+            warning("Generated objects exceed the configured object warning threshold.");
         auto j = matjson::Value::object(); j["anchors"] = out.autoPath.anchors.size(); j["objects"] = out.autoPath.objects.size();
         j["segments"] = out.autoPath.segments; j["portal_half_width"] = ac.halfWidth; j["portal_half_height"] = ac.halfHeight;
         j["modes"] = matjson::Value::array(); for (auto n : out.autoPath.modes) j["modes"].push(n);
         debug.set("invisible_dual_auto", j);
         out.plan.warnings.push_back("Experimental invisible dual path: native touch portals, 240 corrections/sec. Preserves forms; does not reproduce P2 input/rotation/gravity. Verify and test without mods.");
     }
+    catch (Error const& e) {
+        out.autoPath = {}; out.placements = basePlacements;
+        warning(std::string("Invisible helpers unavailable; Options kept and P2 gates restored: ") + e.what());
+    }
+    if (calibration) for (auto const& w : calibration->warnings) warning(w);
+    out.plan.warnings.insert(out.plan.warnings.end(), warnings.begin(), warnings.end());
+    effective["invisible_dual_auto"] = !out.autoPath.anchors.empty();
+    effective["manual_duals"] = out.manualDual;
+    debug.set("effective_conversion", effective);
     // Report and draw the FINAL gates, including manual boundaries / auto-entry
     // blocks. Do not log gates that manual mode removed as actual placements.
     out.plan.gates.clear();
@@ -226,13 +238,18 @@ size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
         throw Error("EDITOR_CLOSED", "Editor unavailable or playtest is active");
     if (!sameLevelData(std::string(editor->getLevelString()), prepared.levelBefore))
         throw Error("EDITOR_CHANGED", "Level changed after analysis. Analyze again.");
-    if (Mod::get()->getSettingValue<bool>("backup-level")) {
+    if (Mod::get()->getSettingValue<bool>("backup-level")) try {
         auto folder = Mod::get()->getSaveDir() / "backups";
         std::filesystem::create_directories(folder);
         auto path = folder / ("before-import-" + Diagnostics::stamp() + ".level.txt");
         std::ofstream backup(path, std::ios::binary); backup << prepared.levelBefore; backup.flush();
-        if (!backup) throw Error("BACKUP_WRITE", "Backup failed; import cancelled");
+        if (!backup) throw Error("BACKUP_WRITE", "Backup could not be written");
         Diagnostics::get().set("backup", path.filename().string());
+    }
+    catch (std::exception const& e) {
+        Diagnostics::get().set("backup_warning", e.what());
+        log::warn("HoldForge backup warning: {}. Continuing with editor Undo.", e.what());
+        FLAlertLayer::create("Backup warning", "Backup could not be saved. Creation continues with editor Undo available.", "OK")->show();
     }
     std::string text;
     for (auto const& p : prepared.placements) text += p.object;

@@ -30,10 +30,12 @@ struct Trajectory {
     std::vector<TraceInput> inputs;
     // Post-queue samples from every physics step, including periods without clicks.
     std::vector<Sample> steps;
+    bool advisory = false;
+    std::vector<std::string> warnings;
     double position(uint64_t frame) const;
 };
 uint64_t fingerprint(std::string const& text);
-std::vector<Action> traceActions(Replay const& replay, bool twoPlayer);
+std::vector<Action> traceActions(Replay const& replay, bool twoPlayer, bool warningsOnly = false);
 double crossingPosition(double previousX, double currentX);
 void writeTrajectory(std::ostream& out, Trajectory const& trace);
 Trajectory readTrajectory(std::istream& in, Replay const& replay, uint64_t levelHash, bool twoPlayer);
@@ -46,13 +48,19 @@ class Recorder {
     double m_previousX = 0;
     bool m_hasPrevious = false;
     bool m_hasClockOffset = false;
+    bool m_warningsOnly = false;
+    size_t m_nextExpected = 0;
+    std::vector<double> m_expectedTimes;
+    void warning(std::string const& code, std::string const& message);
 public:
-    Recorder(Replay const& replay, uint64_t levelHash, bool twoPlayer);
+    Recorder(Replay const& replay, uint64_t levelHash, bool twoPlayer, bool warningsOnly = false);
     void step(Sample const& sample);
     void stepEnd(Sample const& sample);
     // Called before GD handles an observed jump; never injects input.
     bool input(bool down, bool p2, Sample const& sample);
     Trajectory finish(double endTime);
+    Trajectory partial() const;
+    std::vector<std::string> const& warnings() const { return m_trace.warnings; }
     size_t count() const { return m_trace.inputs.size(); }
     size_t expected() const { return m_expected.size(); }
 };
