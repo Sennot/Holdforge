@@ -114,7 +114,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     for (auto const& gate : out.plan.gates) {
         auto point = editor->posForTime(static_cast<float>(gate.seconds));
         if (calibration && cfg.offsetMs == 0) {
-            try { point = {gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}; }
+            try { point = CCPoint{gate.frame ? static_cast<float>(calibration->position(gate.frame)) : 0.f, y}; }
             catch (Error const&) { warning("Some recorded frames are missing: those gates use approximate editor timeline positions."); }
         }
         if (!std::isfinite(point.x) || !std::isfinite(point.y))

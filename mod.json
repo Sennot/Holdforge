@@ -5,7 +5,7 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.2.2-beta.4",
+  "version": "v0.2.2-beta.5",
   "developer": "HoldForge",
   "description": "Silicate to native hold: warning-only compatibility checks, partial recordings and optional verification.",
   "tags": [

@@ -2,6 +2,8 @@
 
 Silicate `.slc` v2/v3 to native hold objects for GD 2.2081.
 
+**0.2.2-beta.5:** fixes ambiguous CCPoint assignment in the Windows build.
+
 **0.2.2-beta.4:** compatibility checks now give warnings. Damage callbacks do
 not identify noclip or cancel Record/Verify. Partial recordings are retained;
 missing positions use approximate editor timeline mapping. Verify differences
