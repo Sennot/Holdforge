@@ -16,7 +16,7 @@ private:
     std::optional<Trajectory> m_trajectory;
     std::unique_ptr<Recorder> m_recorder;
     geode::Ref<GJGameLevel> m_target;
-    PlayLayer* m_layer = nullptr; // identity only; not used after onQuit/onExit
+    geode::WeakRef<PlayLayer> m_layer;
     std::string m_source, m_holdSource, m_name, m_status = "Import a macro";
     std::string m_savedLevelData; // frozen saved payload; m_target itself is mutable
     std::vector<Placement> m_gates;
@@ -46,7 +46,10 @@ public:
     std::string const& name() const { return m_name; }
     std::string const& status() const { return m_status; }
     Mode mode() const { return m_mode; }
-    bool active(GJBaseGameLayer* layer) const { return m_mode != Mode::None && layer == m_layer; }
+    bool active(GJBaseGameLayer* layer) const {
+        auto current = m_layer.lock();
+        return m_mode != Mode::None && current && layer == current.data();
+    }
     void select(LevelEditorLayer* editor, Replay replay, std::string name);
     void armRecord(LevelEditorLayer* editor);
     void generated(LevelEditorLayer* editor, Prepared const& prepared);
@@ -61,5 +64,6 @@ public:
     void damaged(PlayLayer* layer, PlayerObject* player, GameObject* object);
     void complete(PlayLayer* layer);
     void leave(PlayLayer* layer);
+    void sceneExit(PlayLayer* layer);
 };
 }

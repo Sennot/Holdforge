@@ -2,6 +2,11 @@
 
 Silicate `.slc` v2/v3 to native hold objects for GD 2.2081.
 
+**0.2.2-beta.6:** accepts native entrance 2902 by class and role without a
+false category check. Reports dual coverage and located gaps, shrinks portals
+near P1, avoids reserving geometry values as groups, and retains usable helpers
+when groups run out. Temporary scene exits retain Verify.
+
 **0.2.2-beta.5:** fixes ambiguous CCPoint assignment in the Windows build.
 
 **0.2.2-beta.4:** compatibility checks now give warnings. Damage callbacks do

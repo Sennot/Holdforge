@@ -177,7 +177,7 @@ class $modify(HFPlayTrace, PlayLayer) {
         PlayLayer::levelComplete();
     }
     void onQuit() { hf::Diagnostics::get().checkpoint("play_quit"); hf::Workflow::get().leave(this); PlayLayer::onQuit(); }
-    void onExit() { hf::Workflow::get().leave(this); PlayLayer::onExit(); }
+    void onExit() { hf::Workflow::get().sceneExit(this); PlayLayer::onExit(); }
 };
 class $modify(HFEditorTrace, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {

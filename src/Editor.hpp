@@ -11,6 +11,8 @@ struct Prepared {
     std::vector<Placement> placements;
     std::string levelBefore;
     bool manualDual = false;
+    bool autoRequested = false;
+    std::string autoIssue;
 };
 Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory const* trajectory = nullptr, bool requireRecording = true);
 size_t apply(LevelEditorLayer* editor, Prepared const& prepared);

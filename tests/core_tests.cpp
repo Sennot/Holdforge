@@ -4,6 +4,7 @@
 #include "core/AutoPath.hpp"
 #include "core/ManualDual.hpp"
 #include "core/LevelIdentity.hpp"
+#include "core/NativeObjects.hpp"
 #include <set>
 #include <sstream>
 #include <cmath>
@@ -208,6 +209,66 @@ void autoTests() {
     auto multi = t; for (size_t i=25; i<30; ++i) multi.steps[i].dual = false;
     check(hf::makeAutoPath(multi, "").segments == 2, "separated dual sections planned independently");
 }
+void dualRecoveryTests() {
+    // User report 1790354720488290: factory returned TeleportPortalObject 2902,
+    // object_type=0, yellow_exit=false, linked_exit=false. Category is not
+    // part of the class/role check, both before and after editor insertion.
+    check(hf::native::isUnlinkedEntrance(2902, true, false, false), "accept the actual beta.5 probe identity despite category 0");
+    check(!hf::native::isUnlinkedEntrance(2902, false, false, false), "wrong C++ class still rejected");
+    check(!hf::native::isUnlinkedEntrance(2064, true, false, false), "orange exit cannot become entrance");
+    check(!hf::native::isUnlinkedEntrance(2902, true, true, false), "exit role rejected");
+    check(!hf::native::isUnlinkedEntrance(2902, true, false, true), "linked pair rejected");
+    auto ids = hf::reservedIDs("1,2902,2,9000.25,3,8500,6,7500,20,6000,61,6001,32,0.5,128,2,129,3,51,9999,57,9998.9997,442,9996.9995,999,9994;");
+    check(!ids[2902] && !ids[9000] && !ids[8500] && !ids[7500] && !ids[6000] && !ids[6001], "object IDs and geometry do not reserve groups");
+    for (int id=9994; id<=9999; ++id) check(ids[id], "targets, groups, remaps and unknown values remain reserved");
+    // A decorative level can contain every integer X without using ANY group.
+    std::string decor;
+    for (int x=1; x<=9999; ++x) decor += "1,1,2," + std::to_string(x) + ",3,100;";
+    auto t = autoTrace(0, 1);
+    hf::AutoPathConfig cfg; cfg.warningsOnly = true; cfg.protectP1 = true;
+    auto full = hf::makeAutoPath(t, decor, cfg);
+    check(full.groupsAvailable == 9999 && full.anchors.size() == full.eligibleSteps, "large decorative level retains full helper capacity");
+    check(full.groupsUsed == full.anchors.size()+1, "chain needs only one terminal target");
+
+    auto close = t;
+    for (auto& s : close.steps) s.p2y = 145;
+    auto narrow = hf::makeAutoPath(close, "", cfg);
+    check(narrow.reducedPortals == narrow.anchors.size() && narrow.skippedOverlap == 0, "nearby P1 leads to smaller portals without dropping coverage");
+    check(narrow.anchors.front().scale == .25f && narrow.anchors.front().y == 145, "smaller portals remain centered on recorded P2 path");
+    for (auto const& o : narrow.objects) if (o.kind == hf::AutoKind::Portal)
+        check(o.object.find(",32,0.25,") != std::string::npos, "adaptive size reaches native serialization");
+    for (size_t i=20; i<=23; ++i) close.steps[i].p2y = close.steps[i].y;
+    auto gaps = hf::makeAutoPath(close, "", cfg);
+    check(gaps.skippedOverlap == 4 && !gaps.anchors.empty(), "unavoidable overlap omits only affected steps");
+    check(gaps.anchors.size()+gaps.skippedOverlap == gaps.eligibleSteps, "reported coverage accounts for overlap gaps");
+    check(gaps.gaps.size()==1 && gaps.gaps[0].steps==4 && gaps.gaps[0].reason=="p1_overlap" &&
+        gaps.gaps[0].beginTime==close.steps[20].time && gaps.gaps[0].endTime==close.steps[24].time, "overlap gap gives exact recorded interval for manual repair");
+    std::vector<hf::PositionedGate> base = {{{0,0,-1,-1},0}};
+    auto gates = hf::autoControlGates(base, gaps);
+    float end = static_cast<float>(hf::crossingPosition(close.steps[19].x, close.steps[20].x));
+    bool restored = false;
+    for (auto const& g : gates) if (g.x == end) restored = g.gate.p2 == -1;
+    check(restored, "P2 restored to macro state during overlap gaps");
+    auto merged = t; for (auto& s : merged.steps) s.p2y = s.y;
+    auto noHelpers = hf::makeAutoPath(merged, "", cfg);
+    check(noHelpers.objects.empty() && noHelpers.skippedOverlap == noHelpers.eligibleSteps && !noHelpers.warnings.empty(), "zero helper coverage is explicit and does not throw in warning mode");
+    cfg.protectP1 = false;
+    check(hf::makeAutoPath(merged, "", cfg).anchors.size() == full.anchors.size(), "user may allow overlapping portals with warning");
+
+    std::string busy = "1,1,57,";
+    for (int i=1; i<=9995; ++i) busy += std::to_string(i)+".";
+    busy += ";";
+    auto limited = hf::makeAutoPath(t, busy, cfg);
+    check(limited.groupsAvailable == 4 && limited.groupsUsed == 4 && limited.anchors.size() == 3, "scarce groups retain a usable prefix including its exit target");
+    check(limited.skippedGroups+limited.anchors.size() == limited.eligibleSteps, "group shortage is included in coverage");
+    check(limited.gaps.size()==1 && limited.gaps[0].reason=="group_capacity" && limited.gaps[0].steps==limited.skippedGroups, "group-shortage tail is reported as a located gap");
+    std::set<int> targets;
+    for (auto const& o : limited.objects) if (o.group) targets.insert(o.group);
+    for (auto const& a : limited.anchors) check(targets.contains(a.targetGroup), "capacity-limited chain has no missing targets");
+    busy += "1,1,57,9996.9997.9998.9999;";
+    auto exhausted = hf::makeAutoPath(t, busy, cfg);
+    check(exhausted.objects.empty() && exhausted.skippedGroups == exhausted.eligibleSteps, "no free groups reports zero coverage without destroying base gates");
+}
 void manualDualTests() {
     auto t = autoTrace(0, 4);
     std::vector<hf::PositionedGate> gates;
@@ -377,6 +438,7 @@ void advisoryTests() {
 }
 int main(int argc, char** argv) {
  try {
+    dualRecoveryTests();
     advisoryTests();
     trajectoryTests();
     autoTests();

@@ -121,10 +121,14 @@ void HoldPopup::onAnalyze(CCObject*) {
     try {
         m_prepared = prepare(m_editor, *m_replay, Workflow::get().trajectory());
         auto const& p = m_prepared->plan;
-        auto stats = fmt::format("SLC{}  /  {} TPS  /  {} objects  /  {:.2f}s", m_replay->format, m_replay->tps, m_prepared->placements.size() + m_prepared->autoPath.objects.size(), p.duration);
+        auto const& path = m_prepared->autoPath;
+        double coverage = path.eligibleSteps ? 100.0*path.anchors.size()/path.eligibleSteps : 0;
+        auto stats = fmt::format("{} Options / {} helpers / dual {:.1f}%", m_prepared->placements.size(), path.objects.size(), coverage);
         m_stats->setString(stats.c_str()); m_stats->limitLabelWidth(380, .31f, .17f);
         status(m_prepared->manualDual ? "Ready - Create, then build your dual auto objects" : Workflow::get().trajectory() ? "Recorded positions ready - Create, then Verify" :
             fmt::format("Ready - {} notes. Create, then test holding.", p.warnings.size()));
+        if (m_prepared->autoRequested && path.anchors.empty()) status("Warning: 0 dual helpers - see Help / Export logs", true);
+        else if (path.anchors.size() < path.eligibleSteps) status("Partial dual coverage - gaps need manual checking", true);
         m_create->setEnabled(true); m_create->setOpacity(255); drawTimeline();
     } catch (std::exception const& e) { failure(e); }
 }
@@ -136,8 +140,13 @@ void HoldPopup::onCreate(CCObject*) {
         auto count = apply(m_editor, *m_prepared); m_applied = true;
         Workflow::get().generated(m_editor, *m_prepared);
         m_create->setEnabled(false); m_create->setOpacity(110);
-        status(fmt::format("Created {} objects - one Undo restores the batch", count));
+        status(fmt::format("Created {} Options + {} helpers - one Undo", m_prepared->placements.size(), m_prepared->autoPath.objects.size()));
         std::string notes;
+        if (m_prepared->autoRequested && m_prepared->autoPath.anchors.empty())
+            notes = "\n<cr>0 DUAL HELPERS CREATED.</c> " + m_prepared->autoIssue;
+        else if (m_prepared->autoPath.anchors.size() < m_prepared->autoPath.eligibleSteps)
+            notes = fmt::format("\n<cy>Partial dual coverage: {:.1f}%.</c> Gaps use native gates and may need manual objects.",
+                100.0*m_prepared->autoPath.anchors.size()/m_prepared->autoPath.eligibleSteps);
         size_t shown = 0;
         for (auto const& w : m_prepared->plan.warnings) { if (shown++ == 5) { notes += "\nMore warnings: Export logs."; break; } notes += "\n" + w; }
         auto next = m_prepared->manualDual
@@ -175,12 +184,20 @@ void HoldPopup::onHelp(CCObject*) {
         "Dual shares P1. Two Player Mode uses independent P1/P2 streams.\n"
         "Record saves every physics step; Create writes native level objects.\n"
         "Verify compares native hold to the recording. No runtime fixes.\n"
-        "Invisible dual auto uses hidden portals along the recorded P2 path. Beta: test without HoldForge.\n"
+        "Invisible dual auto uses hidden portals, not solid platforms. Coverage shows recorded dual steps with helpers.\n"
+        "Avoid P1 shrinks portals and leaves native gates in unsafe gaps. Test without HoldForge.\n"
         "Manual dual sections leaves dual construction to you; test your edits with normal Play.\n"
         "Compatibility checks give warnings and never cancel the run.\n"
         "Settings: timing offset, editor layer, debug traces.\n"
         "For bugs: enable Debug + Runtime trace, reproduce, then Export logs.";
     if (m_prepared) for (auto const& w : m_prepared->plan.warnings) message += "\n" + w;
+    if (m_prepared) {
+        size_t shown = 0;
+        for (auto const& gap : m_prepared->autoPath.gaps) {
+            if (shown++ == 6) { message += "\nMore dual gaps: Export logs."; break; }
+            message += fmt::format("\nDual gap {:.3f}-{:.3f}s, X {:.1f}-{:.1f}: {}", gap.beginTime, gap.endTime, gap.beginX, gap.endX, gap.reason);
+        }
+    }
     FLAlertLayer::create("HoldForge help", message, "OK")->show();
 }
 void HoldPopup::drawTimeline() {

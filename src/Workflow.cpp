@@ -168,6 +168,10 @@ void Workflow::generated(LevelEditorLayer* editor, Prepared const& prepared) {
     m_anchors = prepared.autoPath.anchors; m_autoTargets.clear();
     for (size_t i=0; i<m_anchors.size(); ++i) m_autoTargets.emplace(m_anchors[i].targetGroup, i);
     m_status = m_manualDual ? "Generated - edit duals, then normal Play with macro OFF" : "Generated - Verify with macro playback OFF";
+    if (prepared.autoRequested && prepared.autoPath.anchors.empty())
+        m_status = "Warning: Options created, 0 dual helpers - Export logs";
+    else if (prepared.autoPath.anchors.size() < prepared.autoPath.eligibleSteps)
+        m_status = "Generated with partial dual coverage - check gaps";
     Diagnostics::get().set("native_verification", "not_tested");
 }
 void Workflow::armVerify(LevelEditorLayer* editor) {
@@ -182,6 +186,7 @@ void Workflow::armVerify(LevelEditorLayer* editor) {
     Diagnostics::get().set("native_verification", "armed");
 }
 void Workflow::attempt(PlayLayer* layer, bool reset) {
+    if (m_mode != Mode::None && !m_layer.valid()) m_armed = true;
     if (m_mode == Mode::None || !target(layer) || (!reset && m_layer == layer)) return;
     if (!m_armed && m_layer != layer) return;
     m_layer = layer; m_armed = false;
@@ -365,5 +370,19 @@ void Workflow::leave(PlayLayer* layer) {
         m_mode = Mode::None; m_armed = false; m_recorder.reset();
     }
     if (m_layer == layer) m_layer = nullptr;
+}
+void Workflow::sceneExit(PlayLayer* layer) {
+    if (!active(layer)) return;
+    // CCNode::onExit is also used by scene transitions/overlays. The report
+    // showed Verify being cancelled here while the same run continued.
+    // Explicit onQuit/levelComplete end the session; a WeakRef guards lifetime.
+    auto info = sampleJson(sample(layer));
+    info["mode"] = m_mode == Mode::Record ? "record" : "verify";
+    info["session_retained"] = true;
+    Diagnostics::get().event("workflow_scene_exit", info);
+    if (m_mode == Mode::Record && m_recorder && m_recorder->count()) {
+        recorderWarnings(); saveRecording(m_recorder->partial());
+        m_status = "Recording retained across scene transition";
+    }
 }
 }

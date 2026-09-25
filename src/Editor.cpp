@@ -74,6 +74,9 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     out.plan = plan(replay, cfg);
     out.manualDual = calibration && calibration->sawDual && manualRequested;
     bool autoDual = calibration && calibration->sawDual && !cfg.twoPlayer && !manualRequested && mod->getSettingValue<bool>("dual-auto");
+    out.autoRequested = !cfg.twoPlayer && !manualRequested && mod->getSettingValue<bool>("dual-auto") &&
+        (containsDual || (calibration && calibration->sawDual));
+    if (out.autoRequested && !calibration) out.autoIssue = "Record a trajectory to place dual helpers";
     effective["invisible_dual_auto"] = autoDual;
     effective["manual_duals"] = out.manualDual;
     if (calibration) {
@@ -160,19 +163,24 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         probe["created"] = object != nullptr; probe["teleport_class"] = prototype != nullptr;
         if (object) { probe["actual_id"] = object->m_objectID; probe["object_type"] = static_cast<int>(object->m_objectType); }
         if (prototype) { probe["yellow_exit"] = prototype->m_isYellowPortal; probe["linked_exit"] = prototype->m_orangePortal != nullptr; }
+        bool accepted = prototype && native::isUnlinkedEntrance(prototype->m_objectID, true,
+            prototype->m_isYellowPortal, prototype->m_orangePortal != nullptr);
+        probe["accepted"] = accepted; probe["identity_check"] = "class_id_entrance_role";
         debug.set("portal_probe", probe);
-        if (!prototype || prototype->m_objectID != native::unlinkedPortal ||
-            prototype->m_objectType != GameObjectType::TeleportPortal || prototype->m_isYellowPortal || prototype->m_orangePortal)
-            throw Error("AUTO_PORTAL_TYPE", "Expected BLUE entrance 2902 (2064 is the orange exit). Runtime type differs; Export logs includes portal_probe. Use Manual dual sections to continue without auto helpers");
+        if (!accepted)
+            throw Error("AUTO_PORTAL_TYPE", "Native factory could not create an unlinked TeleportPortalObject entrance 2902");
         prototype->setRScale(.5f);
         auto rect = prototype->getObjectRect();
         AutoPathConfig ac;
         ac.layer = layer; ac.warningsOnly = true; ac.maxObjects = cfg.maxTriggers > out.placements.size() ? cfg.maxTriggers - out.placements.size() : 0;
+        ac.protectP1 = mod->getSettingValue<bool>("dual-protect-p1");
         ac.halfWidth = rect.size.width / 2; ac.halfHeight = rect.size.height / 2;
         probe["half_width"] = ac.halfWidth; probe["half_height"] = ac.halfHeight;
+        if (!std::isfinite(ac.halfWidth) || !std::isfinite(ac.halfHeight) || ac.halfWidth <= 0 || ac.halfHeight <= 0 || ac.halfWidth > 100 || ac.halfHeight > 100) {
+            ac.halfWidth = 15; ac.halfHeight = 25; probe["bounds_fallback"] = true;
+            warning("Portal prototype bounds unavailable: using approximate bounds. Check dual helpers in game.");
+        }
         debug.set("portal_probe", probe); debug.checkpoint("portal_probe_complete", probe);
-        if (ac.halfWidth <= 0 || ac.halfHeight <= 0 || ac.halfWidth > 100 || ac.halfHeight > 100)
-            throw Error("AUTO_PORTAL_BOUNDS", "Unexpected native portal hitbox; export logs");
         out.autoPath = makeAutoPath(*calibration, out.levelBefore, ac);
         for (auto const& w : out.autoPath.warnings) warning(w);
         std::vector<PositionedGate> sourceGates;
@@ -188,6 +196,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
                 auto j = matjson::Value::object(); j["step"] = a.step; j["time"] = a.time; j["mode"] = a.mode;
                 j["x"] = a.x; j["y"] = a.y; j["target_y"] = a.targetY; j["on_x"] = a.onX; j["off_x"] = a.offX;
                 j["portal_group"] = a.portalGroup; j["target_group"] = a.targetGroup;
+                j["scale"] = a.scale;
                 debug.event("auto_anchor", j);
             }
         }
@@ -196,12 +205,26 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
             warning("Generated objects exceed the configured object warning threshold.");
         auto j = matjson::Value::object(); j["anchors"] = out.autoPath.anchors.size(); j["objects"] = out.autoPath.objects.size();
         j["segments"] = out.autoPath.segments; j["portal_half_width"] = ac.halfWidth; j["portal_half_height"] = ac.halfHeight;
+        j["dual_steps"] = out.autoPath.dualSteps; j["eligible_steps"] = out.autoPath.eligibleSteps;
+        j["coverage_percent"] = out.autoPath.eligibleSteps ? 100.0*out.autoPath.anchors.size()/out.autoPath.eligibleSteps : 0.0;
+        j["skipped_crossings"] = out.autoPath.skippedCrossings; j["skipped_overlap"] = out.autoPath.skippedOverlap;
+        j["skipped_groups"] = out.autoPath.skippedGroups; j["reduced_portals"] = out.autoPath.reducedPortals;
+        j["groups_available"] = out.autoPath.groupsAvailable; j["groups_used"] = out.autoPath.groupsUsed;
+        j["protect_p1"] = ac.protectP1;
+        j["gaps"] = matjson::Value::array();
+        for (auto const& gap : out.autoPath.gaps) {
+            auto row = matjson::Value::object(); row["begin_time"] = gap.beginTime; row["end_time"] = gap.endTime;
+            row["begin_x"] = gap.beginX; row["end_x"] = gap.endX; row["steps"] = gap.steps; row["reason"] = gap.reason;
+            j["gaps"].push(row);
+        }
         j["modes"] = matjson::Value::array(); for (auto n : out.autoPath.modes) j["modes"].push(n);
         debug.set("invisible_dual_auto", j);
+        if (out.autoPath.anchors.empty()) out.autoIssue = "No usable helper intervals - inspect warnings";
         out.plan.warnings.push_back("Experimental invisible dual path: native touch portals, 240 corrections/sec. Preserves forms; does not reproduce P2 input/rotation/gravity. Verify and test without mods.");
     }
     catch (Error const& e) {
         out.autoPath = {}; out.placements = basePlacements;
+        out.autoIssue = e.code + ": " + e.what();
         warning(std::string("Invisible helpers unavailable; Options kept and P2 gates restored: ") + e.what());
     }
     if (calibration) for (auto const& w : calibration->warnings) warning(w);
@@ -227,6 +250,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     }
     auto report = matjson::Value::object(); report["triggers"] = out.placements.size();
     report["auto_objects"] = out.autoPath.objects.size();
+    report["auto_requested"] = out.autoRequested; report["auto_issue"] = out.autoIssue;
     report["p1_events"] = out.plan.p1Events; report["p2_events"] = out.plan.p2Events;
     report["duplicates_removed"] = out.plan.duplicates; report["duration_seconds"] = out.plan.duration;
     report["warnings"] = matjson::Value::array(); for (auto const& w : out.plan.warnings) report["warnings"].push(w);
@@ -279,7 +303,7 @@ size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
             if (e.group) ok = ok && obj->m_groupCount == 1 && obj->getGroupID(0) == e.group;
             if (e.kind == AutoKind::Portal) {
                 auto portal = typeinfo_cast<TeleportPortalObject*>(obj);
-                ok = ok && portal && portal->m_objectType == GameObjectType::TeleportPortal && !portal->m_isYellowPortal && !portal->m_orangePortal &&
+                ok = ok && portal && native::isUnlinkedEntrance(portal->m_objectID, true, portal->m_isYellowPortal, portal->m_orangePortal != nullptr) &&
                     portal->m_targetGroupID == e.target && portal->m_isTouchTriggered && !portal->m_isSpawnTriggered &&
                     !portal->m_isNoTouch && portal->m_ignoreX && !portal->m_ignoreY && !portal->m_saveOffset &&
                     portal->m_staticForceEnabled && portal->m_staticForce == 0 && !portal->m_staticForceAdditive &&

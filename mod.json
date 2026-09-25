@@ -5,9 +5,9 @@
   },
   "id": "holdforge.slc_to_hold",
   "name": "HoldForge",
-  "version": "v0.2.2-beta.5",
+  "version": "v0.2.2-beta.6",
   "developer": "HoldForge",
-  "description": "Silicate to native hold: warning-only compatibility checks, partial recordings and optional verification.",
+  "description": "Silicate to native hold: dual helper coverage, smaller portals near P1 and warning-only diagnostics.",
   "tags": [
     "editor",
     "utility"
@@ -75,7 +75,13 @@
       "type": "bool",
       "name": "Invisible dual auto (beta)",
       "default": true,
-      "description": "Generate hidden native portals along available recorded P2 positions. Partial recordings and P1 overlap give warnings. If helpers cannot be built, Options are still created and the omission is reported. No effect in Two Player Mode."
+      "description": "Ordinary dual: hidden native portals follow available recorded P2 steps. Reports helper coverage; group shortage keeps usable portions. Other intervals retain native gates. Manual dual sections overrides this mode."
+    },
+    "dual-protect-p1": {
+      "type": "bool",
+      "name": "Avoid P1 in dual auto",
+      "default": true,
+      "description": "Shrink portal hitboxes near P1. Omit intervals where even the smaller portal overlaps P1; keep the other helpers and native gates in gaps. This uses recorded positions and is not a guarantee against gameplay drift. Turn off to permit overlap with a warning."
     },
     "shared-p1-only": {
       "type": "bool",
