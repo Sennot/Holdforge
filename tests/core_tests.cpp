@@ -3,6 +3,7 @@
 #include "core/Trajectory.hpp"
 #include "core/AutoPath.hpp"
 #include "core/ManualDual.hpp"
+#include "core/LevelIdentity.hpp"
 #include <set>
 #include <sstream>
 #include <cmath>
@@ -240,11 +241,61 @@ void manualDualTests() {
     auto badTrace = t; badTrace.steps[10].time = badTrace.steps[9].time;
     error([&] { hf::manualDualGates(gates, badTrace); }, "MANUAL_RECORD");
 }
+void levelIdentityTests() {
+    // Simulate Import -> Record -> Save/Play -> reopen, using differently
+    // serialized but equivalent level data. No GD runtime is simulated here.
+    std::string source = "kA2,0,kA4,1,kA10,0,kS39,1;1,1,2,10.000,3,-0.0,20,4,61,2;1,2899,2,90,165,1,199,-1;";
+    std::string reopened = "kS39,7,kA10,0,kA4,1,kA2,0;61,9,3,0,2,010,1,1,20,999;199,-1,165,1,2,90.0,1,2899;;";
+    check(source != reopened && hf::sameLevelData(source, reopened), "save/reopen preserves content identity despite spelling/field-order/editor-metadata changes");
+    check(hf::levelFingerprint(source) == hf::levelFingerprint(reopened), "cache key remains stable after save/reopen");
+    check(hf::firstLevelDifference(source, reopened).equal, "benign differences do not suggest deleting objects");
+    using State = hf::EditorSession;
+    auto state = [&](bool sameObject, std::string const& current, std::string const& generated = "", bool sameMode = true) {
+        return hf::classifyEditorSession(true, sameObject, sameMode, source, generated, current);
+    };
+    check(state(true, reopened) == State::Source, "recorded source reopens with macro and Analyze available");
+    check(state(false, reopened) == State::Source, "re-created level instance with same data retains matching record");
+    std::string modified = reopened; modified.replace(modified.find("2,010"), 5, "2,11");
+    check(!hf::sameLevelData(source, modified), "position edits invalidate recording");
+    check(state(true, modified) == State::Changed, "same level with content differences KEEPS macro, never loops to Import");
+    check(state(false, modified) == State::Other, "different level does not inherit the previous macro");
+    auto diff = hf::firstLevelDifference(source, modified);
+    check(!diff.equal && diff.record == 1 && diff.property == "2" && diff.expected == "10" && diff.actual == "11", "mismatch identifies object property without exporting level");
+    check(state(true, reopened, "", false) == State::Changed, "mode change keeps macro but requires new recording");
+    std::string generated = source + "1,2899,2,100,165,-1,199,1;";
+    std::string generatedReopened = reopened + "199,1,2,100.00,165,-1,1,2899;";
+    // Strip redundant end delimiters before appending another real object.
+    generatedReopened.replace(generatedReopened.find(";;"), 2, ";");
+    check(state(true, generatedReopened, generated) == State::Generated, "generated level survives reopen for Verify and duplicate-Create guard");
+    check(!hf::sameLevelData(source, generated), "new Options invalidate source recording");
+    check(hf::firstLevelDifference(source, generated).property == "record_count", "new objects reported explicitly");
+    check(hf::classifyEditorSession(false, true, true, source, generated, reopened) == State::Unselected, "no macro remains unselected");
+    for (auto const& replacement : {std::pair{"kA10,0", "kA10,1"}, std::pair{"kA4,1", "kA4,2"},
+                                    std::pair{"165,1", "165,-1"}, std::pair{"199,-1", "199,1"}}) {
+        auto changed = source; changed.replace(changed.find(replacement.first), std::strlen(replacement.first), replacement.second);
+        check(!hf::sameLevelData(source, changed), "gameplay settings/control edits remain significant");
+    }
+    check(!hf::sameLevelData("kA2,0;1,1,2,1;1,1,2,2;", "kA2,0;1,1,2,2;1,1,2,1;"), "object order remains significant for trigger/group ordering");
+    check(!hf::sameLevelData("kA2,0;1,1,31,0010;", "kA2,0;1,1,31,10;"), "text and unknown values are not treated as numbers");
+    check(!hf::sameLevelData("kA2,0;1,1,2,1,2,2;", "kA2,0;1,1,2,2,2,1;"), "duplicate fields do not get silently flattened");
+    check(!hf::sameLevelData("kA2,0;1,1,2,10,;", "kA2,0;1,1,2,10;"), "malformed records retain exact identity");
+    check(hf::sameLevelData("kA2,0;1,1,2,.50,3,-000.50,6,+090.00;", "kA2,0;1,1,2,0.5,3,-0.5,6,90;"), "decimal normalization is exact, without float rounding");
+    check(!hf::sameLevelData("kA2,0;1,1,2,1.000000000001;", "kA2,0;1,1,2,1;"), "small coordinate changes are never rounded away");
+    check(hf::sameLevelData("kS39,1;1,1,20,7;", "kS39,2;1,1;"), "absent editor layer is equivalent to editor-only layer change");
+    hf::Replay r; r.fingerprint = 93;
+    r.actions = {{2, hf::Kind::Jump, true, false}, {4, hf::Kind::Jump, false, false}};
+    auto captured = capture(r); captured.levelHash = hf::levelFingerprint(source);
+    std::ostringstream saved; hf::writeTrajectory(saved, captured);
+    std::istringstream restored(saved.str());
+    check(hf::readTrajectory(restored, r, hf::levelFingerprint(reopened), false).completed, "complete recording reloads using equivalent saved level");
+    error([&] { std::istringstream wrong(saved.str()); hf::readTrajectory(wrong, r, hf::levelFingerprint(modified), false); }, "CAPTURE_IDENTITY");
+}
 int main(int argc, char** argv) {
  try {
     trajectoryTests();
     autoTests();
     manualDualTests();
+    levelIdentityTests();
     Bytes s = input(240, 1, true, false); append(s, input(120, 1, false, false));
     auto data = v3(s, 2); auto r = hf::parse(data);
     check(r.format == 3 && r.tps == 240 && r.seed == 12345 && r.build == 81, "v3 metadata");

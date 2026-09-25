@@ -2,6 +2,7 @@
 #include "Diagnostics.hpp"
 #include "core/NativeObjects.hpp"
 #include "core/ManualDual.hpp"
+#include "core/LevelIdentity.hpp"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -24,9 +25,9 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
     info["two_player"] = settings->m_twoPlayerMode; info["start_dual"] = settings->m_startDual;
     info["start_speed"] = static_cast<int>(settings->m_startSpeed);
     info["objects"] = editor->m_objects->count();
-    uint64_t hash = 14695981039346656037ULL;
-    for (auto c : out.levelBefore) { hash ^= static_cast<uint8_t>(c); hash *= 1099511628211ULL; }
-    info["fingerprint_fnv1a64"] = fmt::format("{:016x}", hash);
+    uint64_t hash = levelFingerprint(out.levelBefore);
+    info["fingerprint_fnv1a64"] = fmt::format("{:016x}", fingerprint(out.levelBefore));
+    info["content_hash"] = fmt::format("{:016x}", hash); info["identity_version"] = "level-v1";
     info["serialized_bytes"] = out.levelBefore.size(); debug.set("level", info);
     // Conservative gate: these mechanics can make an editor timeline differ from actual movement.
     std::unordered_map<int, std::string> risks{
@@ -93,7 +94,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
         if (calibration->twoPlayer != cfg.twoPlayer)
             throw Error("TRACE_MODE", "Recording and current Two Player Mode differ. Re-import the macro and record this mode");
         if (calibration->levelHash != hash)
-            throw Error("TRACE_LEVEL", "Recording and current level data differ. Re-import the macro to select the matching recording, or Record again. If the level is untouched, Export logs for diagnosis");
+            throw Error("TRACE_LEVEL", "Recording and current level content differ. The macro and recording are kept. If you did not edit gameplay, Export logs; otherwise press Record for this version. No re-import is required on the same level");
         if (cfg.offsetMs != 0 || mod->getSettingValue<double>("x-offset") != 0)
             throw Error("TRACE_OFFSET", "Set Timing offset and Position offset to zero for recorded positions");
         // Only the last generic editor-map warning is replaced. Preserve
@@ -223,7 +224,7 @@ Prepared prepare(LevelEditorLayer* editor, Replay const& replay, Trajectory cons
 size_t apply(LevelEditorLayer* editor, Prepared const& prepared) {
     if (!editor || LevelEditorLayer::get() != editor || editor->m_playbackMode != PlaybackMode::Not)
         throw Error("EDITOR_CLOSED", "Editor unavailable or playtest is active");
-    if (std::string(editor->getLevelString()) != prepared.levelBefore)
+    if (!sameLevelData(std::string(editor->getLevelString()), prepared.levelBefore))
         throw Error("EDITOR_CHANGED", "Level changed after analysis. Analyze again.");
     if (Mod::get()->getSettingValue<bool>("backup-level")) {
         auto folder = Mod::get()->getSaveDir() / "backups";

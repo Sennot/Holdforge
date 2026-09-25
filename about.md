@@ -18,3 +18,8 @@ hooks only observe. Test the saved result with HoldForge disabled before publish
 Manual dual sections for hand-built invisible auto, and preserves startup
 checkpoints independently of the event limit. Manual batches use normal Play
 for testing after edits. The reported Spout / More Icons crash is unconfirmed.
+
+Beta.3 keeps the selected macro when returning from Record to the same level.
+Equivalent save formatting no longer invalidates the trajectory. Real content
+changes still require a new recording; Export logs identifies the first changed
+property. Windows/gameplay validation remains required.

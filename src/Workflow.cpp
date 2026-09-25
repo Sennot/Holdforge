@@ -30,22 +30,34 @@ matjson::Value sampleJson(Sample const& s) {
     j["disabled1"] = s.disabled1; j["disabled2"] = s.disabled2; return j;
 }
 Workflow& Workflow::get() { static Workflow w; return w; }
+bool Workflow::sameSessionLevel(GJGameLevel* level) const {
+    return level && m_target && (level == m_target.data() ||
+        (!m_savedLevelData.empty() && std::string(level->m_levelString) == m_savedLevelData));
+}
 Workflow::EditorState Workflow::editorState(LevelEditorLayer* editor) const {
     if (!m_replay) return EditorState::Unselected;
-    if (!editor || !editor->m_levelSettings || editor->m_levelSettings->m_twoPlayerMode != m_twoPlayer)
-        return EditorState::Changed;
+    if (!editor || !editor->m_levelSettings) return EditorState::Other;
     auto current = std::string(editor->getLevelString());
-    if (!m_holdSource.empty() && current == m_holdSource) return EditorState::Generated;
-    if (current == m_source) return EditorState::Source;
+    auto state = classifyEditorSession(true, sameSessionLevel(editor->m_level),
+        editor->m_levelSettings->m_twoPlayerMode == m_twoPlayer, m_source, m_holdSource, current);
+    if (state == EditorState::Source || state == EditorState::Generated) return state;
     auto j = matjson::Value::object(); j["source_hash"] = fmt::format("{:016x}", fingerprint(m_source));
     j["current_hash"] = fmt::format("{:016x}", fingerprint(current));
+    j["source_content_hash"] = fmt::format("{:016x}", levelFingerprint(m_source));
+    j["current_content_hash"] = fmt::format("{:016x}", levelFingerprint(current));
+    j["same_session_level"] = sameSessionLevel(editor->m_level);
+    j["recording_retained"] = m_trajectory.has_value();
+    j["recorded_two_player"] = m_twoPlayer; j["current_two_player"] = editor->m_levelSettings->m_twoPlayerMode;
     j["source_bytes"] = m_source.size(); j["current_bytes"] = current.size();
     j["first_different_byte"] = static_cast<size_t>(std::mismatch(m_source.begin(), m_source.end(), current.begin(), current.end()).first-m_source.begin());
+    auto diff = firstLevelDifference(m_source, current);
+    j["first_changed_record"] = diff.record; j["first_changed_property"] = diff.property;
+    j["expected_value"] = diff.expected; j["actual_value"] = diff.actual;
     Diagnostics::get().set("editor_session_changed", j);
-    return EditorState::Changed;
+    return state;
 }
 std::filesystem::path Workflow::cachePath() const {
-    return Mod::get()->getSaveDir() / "trajectories" / fmt::format("{:016x}-{:016x}-{}.hftrace3", m_replay->fingerprint, fingerprint(m_source), m_twoPlayer ? 2 : 1);
+    return Mod::get()->getSaveDir() / "trajectories" / fmt::format("level-v1-{:016x}-{:016x}-{}.hftrace3", m_replay->fingerprint, levelFingerprint(m_source), m_twoPlayer ? 2 : 1);
 }
 bool Workflow::target(PlayLayer* l) const {
     return l && m_target && (l->m_level == m_target.data() ||
@@ -66,25 +78,44 @@ void Workflow::select(LevelEditorLayer* editor, Replay replay, std::string name)
     config.maxTriggers = static_cast<size_t>(Mod::get()->getSettingValue<int64_t>("max-triggers"));
     plan(replay, config);
     m_replay = std::move(replay); m_name = std::move(name); m_target = editor->m_level;
+    m_savedLevelData = editor->m_level ? std::string(editor->m_level->m_levelString) : std::string{};
     m_twoPlayer = editor->m_levelSettings->m_twoPlayerMode;
     m_source = std::string(editor->getLevelString()); m_holdSource.clear(); m_gates.clear(); m_auto = false; m_manualDual = false; m_anchors.clear(); m_autoTargets.clear(); m_autoSeen.clear();
     m_mode = Mode::None; m_armed = false; m_layer = nullptr; m_recorder.reset(); m_trajectory.reset();
     m_status = "Macro loaded - Record a full replay";
     auto path = cachePath();
+    bool legacy = false;
+    if (!std::filesystem::exists(path)) {
+        // Old caches are reusable only when their ORIGINAL byte-exact hash
+        // matches. Never guess which old recording belongs to a changed save.
+        path = Mod::get()->getSaveDir() / "trajectories" / fmt::format("{:016x}-{:016x}-{}.hftrace3", m_replay->fingerprint, fingerprint(m_source), m_twoPlayer ? 2 : 1);
+        legacy = true;
+    }
     if (std::filesystem::exists(path)) {
         if (std::filesystem::file_size(path) > 256 * 1024 * 1024) throw Error("CAPTURE_CACHE", "Trajectory cache too large");
         std::ifstream in(path);
-        m_trajectory = readTrajectory(in, *m_replay, fingerprint(m_source), m_twoPlayer);
+        m_trajectory = readTrajectory(in, *m_replay, legacy ? fingerprint(m_source) : levelFingerprint(m_source), m_twoPlayer);
+        if (legacy) m_trajectory->levelHash = levelFingerprint(m_source);
         m_status = "Recorded trajectory loaded - Analyze";
     }
     Diagnostics::get().set("trajectory_loaded", m_trajectory.has_value());
 }
 void Workflow::armRecord(LevelEditorLayer* editor) {
-    if (!m_replay || !editor || std::string(editor->getLevelString()) != m_source)
-        throw Error("CAPTURE_LEVEL", "Import the macro on the unchanged original level before recording");
-    if (traceActions(*m_replay, m_twoPlayer).empty()) throw Error("CAPTURE_EMPTY", "No recordable input edges");
+    auto state = editorState(editor);
+    if (!m_replay || !editor || !editor->m_levelSettings || state == EditorState::Other || state == EditorState::Unselected)
+        throw Error("CAPTURE_LEVEL", "Select a macro for this level first");
+    if (state == EditorState::Generated)
+        throw Error("CAPTURE_GENERATED", "Record on the original level before conversion. Use Verify on the generated level");
+    bool twoPlayer = editor->m_levelSettings->m_twoPlayerMode;
+    if (traceActions(*m_replay, twoPlayer).empty()) throw Error("CAPTURE_EMPTY", "No recordable input edges");
     // Reuse editor guards for conflicting controls and unsupported mechanics.
-    prepare(editor, *m_replay, nullptr, false);
+    auto prepared = prepare(editor, *m_replay, nullptr, false);
+    // An explicit Record is enough to capture the current source snapshot;
+    // retaining the selected macro must not force another file picker cycle.
+    m_source = prepared.levelBefore; m_twoPlayer = twoPlayer;
+    m_holdSource.clear(); m_gates.clear(); m_auto = false; m_manualDual = false;
+    m_anchors.clear(); m_autoTargets.clear(); m_autoSeen.clear();
+    m_savedLevelData = editor->m_level ? std::string(editor->m_level->m_levelString) : std::string{};
     m_target = editor->m_level; m_trajectory.reset(); m_recorder.reset(); m_layer = nullptr;
     m_mode = Mode::Record; m_armed = true;
     m_status = "Record armed - Save and Exit, then normal Play + Silicate";
@@ -101,7 +132,7 @@ void Workflow::generated(LevelEditorLayer* editor, Prepared const& prepared) {
 void Workflow::armVerify(LevelEditorLayer* editor) {
     if (m_manualDual)
         throw Error("VERIFY_MANUAL_DUAL", "Manual dual sections need your auto objects. After editing, use normal Play with macro OFF and hold input; exact recorded-path Verify is unavailable for this batch");
-    if (!m_trajectory || m_gates.empty() || !editor || std::string(editor->getLevelString()) != m_holdSource)
+    if (!m_trajectory || m_gates.empty() || editorState(editor) != EditorState::Generated)
         throw Error("VERIFY_LEVEL", "Create from the recorded trajectory first; generated level must be unchanged");
     m_target = editor->m_level; m_layer = nullptr; m_mode = Mode::Verify; m_armed = true;
     m_status = "Verify armed - macro OFF, hold input from start";
@@ -116,7 +147,8 @@ void Workflow::attempt(PlayLayer* layer, bool reset) {
     }
     m_checkIndex = 0; m_gateIndex = 0; m_stepIndex = 0; m_maxDualError = 0; m_autoActivated = 0; m_autoSeen.assign(m_anchors.size(), false); m_verifyHeld = {false, false}; m_presses = {0, 0};
     if (m_mode == Mode::Record) {
-        m_recorder = std::make_unique<Recorder>(*m_replay, fingerprint(m_source), m_twoPlayer);
+        m_recorder = std::make_unique<Recorder>(*m_replay, levelFingerprint(m_source), m_twoPlayer);
+        if (layer->m_level) m_savedLevelData = std::string(layer->m_level->m_levelString);
         m_status = "Recording replay";
     } else m_status = "Checking native hold";
     Diagnostics::get().set("workflow_attempt", m_mode == Mode::Record ? "record" : "native_verify");

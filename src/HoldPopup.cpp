@@ -52,13 +52,14 @@ bool HoldPopup::init(LevelEditorLayer* editor) {
     auto& workflow = Workflow::get();
     auto session = workflow.editorState(editor);
     if (auto replay = workflow.replay(); replay &&
-        (session == Workflow::EditorState::Source || session == Workflow::EditorState::Generated)) {
+        session != Workflow::EditorState::Other && session != Workflow::EditorState::Unselected) {
         m_applied = session == Workflow::EditorState::Generated;
         m_replay = *replay; m_file->setString(workflow.name().c_str());
         m_file->limitLabelWidth(380, .43f, .15f);
-        m_stats->setString(workflow.trajectory() ? "Recorded trajectory available" : "Recording required");
+        m_stats->setString(session == Workflow::EditorState::Changed ? "Macro kept - level data needs checking" :
+            workflow.trajectory() ? "Recorded trajectory available" : "Recording required");
         status(workflow.status());
-    } else if (session == Workflow::EditorState::Changed) {
+    } else if (session == Workflow::EditorState::Other) {
         m_stats->setString("Previous session belongs to a different level snapshot");
         m_stats->limitLabelWidth(380, .31f, .17f);
         status("Import a macro for this level");
